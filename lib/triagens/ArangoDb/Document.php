@@ -107,12 +107,12 @@ class Document
     /**
      * hidden attribute index
      */
-    const ENTRY_hiddenAttributes = '_hiddenAttributes';
+    const ENTRY_HIDDENATTRIBUTES = '_hiddenAttributes';
 
     /**
      * hidden attribute index
      */
-    const ENTRY_ignoreHiddenAttributes = '_ignoreHiddenAttributes';
+    const ENTRY_IGNOREHIDDENATTRIBUTES = '_ignoreHiddenAttributes';
 
     /**
      * waitForSync option index
@@ -143,11 +143,11 @@ class Document
             if (isset($options['hiddenAttributes'])) {
                 $this->setHiddenAttributes($options['hiddenAttributes']);
             }
-            if (isset($options['_hiddenAttributes'])) {
-                $this->setHiddenAttributes($options['_hiddenAttributes']);
+            if (isset($options[self::ENTRY_HIDDENATTRIBUTES])) {
+                $this->setHiddenAttributes($options[self::ENTRY_HIDDENATTRIBUTES]);
             }
-            if (isset($options['_ignoreHiddenAttributes'])) {
-                $this->setIgnoreHiddenAttributes($options['_ignoreHiddenAttributes']);
+            if (isset($options[self::ENTRY_IGNOREHIDDENATTRIBUTES])) {
+                $this->setIgnoreHiddenAttributes($options[self::ENTRY_IGNOREHIDDENATTRIBUTES]);
             }
             if (isset($options[self::ENTRY_ISNEW])) {
                 $this->setIsNew($options[self::ENTRY_ISNEW]);
@@ -260,7 +260,7 @@ class Document
             }
         }
 
-        unset ($attributes['_hiddenAttributes']);
+        unset ($attributes[self::ENTRY_HIDDENATTRIBUTES]);
 
         return $attributes;
     }
@@ -383,8 +383,8 @@ class Document
     {
         // This preserves compatibility for the old includeInternals parameter.
         $includeInternals = false;
-        $ignoreHiddenAttributes = $this->_ignoreHiddenAttributes;
-        $_hiddenAttributes = $this->_hiddenAttributes;
+        $ignoreHiddenAttributes = $this->{self::ENTRY_IGNOREHIDDENATTRIBUTES};
+        $_hiddenAttributes = $this->{self::ENTRY_HIDDENATTRIBUTES};
 
         if (!is_array($options)) {
             $includeInternals = $options;
@@ -408,18 +408,18 @@ class Document
             ) ? $options['ignoreHiddenAttributes'] : $ignoreHiddenAttributes;
 
             $ignoreHiddenAttributes = array_key_exists(
-                '_ignoreHiddenAttributes',
+                self::ENTRY_IGNOREHIDDENATTRIBUTES,
                 $options
-            ) ? $options['_ignoreHiddenAttributes'] : $ignoreHiddenAttributes;
+            ) ? $options[self::ENTRY_IGNOREHIDDENATTRIBUTES] : $ignoreHiddenAttributes;
 
             $_hiddenAttributes = array_key_exists(
-                '_hiddenAttributes',
+                self::ENTRY_HIDDENATTRIBUTES,
                 $options
-            ) ? $options['_hiddenAttributes'] : $_hiddenAttributes;
+            ) ? $options[self::ENTRY_HIDDENATTRIBUTES] : $_hiddenAttributes;
         }
 
         $data = $this->_values;
-        $nonInternals = array('_changed', '_values', '_hiddenAttributes');
+        $nonInternals = array('_changed', '_values', self::ENTRY_HIDDENATTRIBUTES);
 
         if ($includeInternals == true) {
             foreach ($this as $key => $value) {
@@ -498,7 +498,7 @@ class Document
      */
     public function setHiddenAttributes(array $attributes)
     {
-        $this->_hiddenAttributes = $attributes;
+        $this->{self::ENTRY_HIDDENATTRIBUTES} = $attributes;
     }
 
     /**
@@ -508,7 +508,7 @@ class Document
      */
     public function getHiddenAttributes()
     {
-        return $this->_hiddenAttributes;
+        return $this->{self::ENTRY_HIDDENATTRIBUTES};
     }
 
     /**
@@ -516,7 +516,7 @@ class Document
      */
     public function isIgnoreHiddenAttributes()
     {
-        return $this->_ignoreHiddenAttributes;
+        return $this->{self::ENTRY_IGNOREHIDDENATTRIBUTES};
     }
 
     /**
@@ -524,7 +524,7 @@ class Document
      */
     public function setIgnoreHiddenAttributes($ignoreHiddenAttributes)
     {
-        $this->_ignoreHiddenAttributes = (bool) $ignoreHiddenAttributes;
+        $this->{self::ENTRY_IGNOREHIDDENATTRIBUTES} = (bool) $ignoreHiddenAttributes;
     }
 
     /**
