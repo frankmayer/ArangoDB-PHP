@@ -1,7 +1,7 @@
 <?php
 /**
  * ArangoDB PHP client testsuite
- * File: DocumentExtendedTest.php
+ * File: CollectionExtendedTest.php
  *
  * @package triagens\ArangoDb
  * @author  Frank Mayer
@@ -10,956 +10,2670 @@
 namespace triagens\ArangoDb;
 
 /**
- * Class DocumentExtendedTest
+ * Class CollectionExtendedTest
  *
- * @property Connection        $connection
- * @property Collection        $collection
- * @property Collection        $edgeCollection
+ * @property Connection $connection
+ * @property Collection $collection
  * @property CollectionHandler $collectionHandler
- * @property DocumentHandler   $documentHandler
+ * @property DocumentHandler $documentHandler
  *
  * @package triagens\ArangoDb
  */
-class DocumentExtendedTest extends
+class CollectionExtendedTest extends
     \PHPUnit_Framework_TestCase
 {
+    /**
+     * Test set-up
+     */
     public function setUp()
     {
-        $this->connection        = getConnection();
+        $this->connection = getConnection();
+        $this->collection = new Collection();
         $this->collectionHandler = new CollectionHandler($this->connection);
-        $this->collection        = new Collection();
-        $this->collection->setName('ArangoDB_PHP_TestSuite_TestCollection_01');
-        $this->collectionHandler->add($this->collection);
         $this->documentHandler = new DocumentHandler($this->connection);
+
+        try {
+            $this->collectionHandler->delete('ArangoDB_PHP_TestSuite_TestCollection_01');
+        } catch (\Exception $e) {
+            // don't bother us, if it's already deleted.
+        }
     }
 
 
     /**
-     * test for creation of document with non utf encoding. This tests for failure of such an action.
+     * test for creation, get, and delete of a collection with waitForSync default value (no setting)
+     */
+    public function testCreateGetAndDeleteCollectionWithWaitForSyncDefault()
+    {
+        $collection = $this->collection;
+        $collectionHandler = $this->collectionHandler;
+
+        $resultingAttribute = $collection->getWaitForSync();
+        $this->assertNull($resultingAttribute, 'Default waitForSync in collection should be NULL!');
+
+        $name = 'ArangoDB_PHP_TestSuite_TestCollection_01';
+        $collection->setName($name);
+
+
+        $response = $collectionHandler->add($collection);
+
+        $this->assertTrue(is_numeric($response), 'Adding collection did not return an id!');
+
+        $collectionHandler->get($name);
+
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * test for creation, getProperties, and delete of a volatile (in-memory-only) collection
+     */
+    public function testCreateGetAndDeleteVolatileCollection()
+    {
+        $collection = $this->collection;
+        $collectionHandler = $this->collectionHandler;
+
+        $resultingAttribute = $collection->getIsVolatile();
+        $this->assertTrue(null === $resultingAttribute, 'Default waitForSync in API should be NULL!');
+
+        $name = 'ArangoDB_PHP_TestSuite_TestCollection_01';
+        $collection->setName($name);
+        $collection->setIsVolatile(true);
+
+
+        $response = $collectionHandler->add($collection);
+
+        $this->assertTrue(is_numeric($response), 'Adding collection did not return an id!');
+
+        $collectionHandler->get($name);
+
+        $properties = $collectionHandler->getProperties($name);
+        $this->assertTrue($properties->getIsVolatile(), '"isVolatile" should be true!');
+
+
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * test for creation, getProperties, and delete of a volatile (in-memory-only) collection
+     */
+    public function testCreateGetAndDeleteSystemCollection()
+    {
+        $collection = $this->collection;
+        $collectionHandler = $this->collectionHandler;
+
+        $resultingAttribute = $collection->getIsSystem();
+        $this->assertTrue(null === $resultingAttribute, 'Default isSystem in API should be NULL!');
+
+        $name = '_ArangoDB_PHP_TestSuite_TestCollection_01';
+        $collection->setName($name);
+        $collection->setIsSystem(true);
+
+
+        $response = $collectionHandler->add($collection);
+
+        $this->assertTrue(is_numeric($response), 'Adding collection did not return an id!');
+
+        $collectionHandler->get($name);
+
+        $properties = $collectionHandler->getProperties($name);
+        $this->assertTrue($properties->getIsSystem(), '"isSystem" should be true!');
+
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * test for getting all collection exclude system collections
+     */
+    public function testGetAllNonSystemCollections()
+    {
+        $collectionHandler = $this->collectionHandler;
+
+        $collections = array(
+            "ArangoDB_PHP_TestSuite_TestCollection_01",
+            "ArangoDB_PHP_TestSuite_TestCollection_02"
+        );
+
+        foreach ($collections as $col) {
+            $collection = new Collection();
+            $collection->setName($col);
+            $collectionHandler->add($collection);
+        }
+
+        $collectionList = $collectionHandler->getAllCollections($options = array("excludeSystem" => true));
+
+        foreach ($collections as $col) {
+            $this->assertArrayHasKey($col, $collectionList, "Collection name should be in collectionList");
+        }
+
+        $this->assertArrayNotHasKey(
+            "_structures",
+            $collectionList,
+            "System collection _structure should not be returned"
+        );
+
+        foreach ($collections as $col) {
+            $collectionHandler->delete($col);
+        }
+    }
+
+    /**
+     * test for getting the Checksum for a collection containing 3 documents in different varieties
+     */
+    public function testGetChecksum()
+    {
+        if (isCluster($this->connection)) {
+            // don't execute this test in a cluster
+            return;
+        }
+
+        $collectionHandler = $this->collectionHandler;
+        $documentHandler = $this->documentHandler;
+
+        $collection = new Collection();
+        $collection->setName("ArangoDB_PHP_TestSuite_TestCollection_01");
+
+        $collection->setId($collectionHandler->create($collection));
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentHandler->save($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentHandler->save($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentHandler->save($collection->getId(), $document3);
+
+        $checksum1 = $collectionHandler->getChecksum($collection->getName(), true, true);
+        $checksum2 = $collectionHandler->getChecksum($collection->getName());
+        $checksum3 = $collectionHandler->getChecksum($collection->getName(), false, true);
+        $checksum4 = $collectionHandler->getChecksum($collection->getName(), true);
+        $revision = $checksum1['revision'];
+        $this->assertEquals($revision, $checksum2['revision']);
+        $this->assertEquals($revision, $checksum3['revision']);
+        $this->assertEquals($revision, $checksum4['revision']);
+
+        $this->assertNotEquals($checksum1['checksum'], $checksum2['checksum']);
+        $this->assertNotEquals($checksum1['checksum'], $checksum3['checksum']);
+        $this->assertNotEquals($checksum1['checksum'], $checksum4['checksum']);
+        $this->assertNotEquals($checksum2['checksum'], $checksum3['checksum']);
+        $this->assertNotEquals($checksum2['checksum'], $checksum4['checksum']);
+        $this->assertNotEquals($checksum3['checksum'], $checksum4['checksum']);
+
+        $collectionHandler->drop($collection);
+    }
+
+    /**
+     *
+     * test for getting the Checksum for a non existing collection
+     */
+    public function testGetChecksumWithException()
+    {
+        $collectionHandler = $this->collectionHandler;
+        try {
+            $collectionHandler->getChecksum("nonExisting", true, true);
+        } catch (\Exception $e) {
+            $this->assertEquals($e->getCode(), 404);
+        }
+    }
+
+    /**
+     * test for getting the , true, true for a collection
+     */
+    public function testGetRevision()
+    {
+        $collectionHandler = $this->collectionHandler;
+        $documentHandler = $this->documentHandler;
+
+        $collection = new Collection();
+        $collection->setName("ArangoDB_PHP_TestSuite_TestCollection_01");
+
+        $collection->setId($collectionHandler->create($collection));
+        $revision = $collectionHandler->getRevision($collection->getName());
+        $this->assertArrayHasKey('revision', $revision);
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentHandler->save($collection->getId(), $document);
+
+        $revision2 = $collectionHandler->getRevision($collection->getName());
+
+        $this->assertNotEquals($revision2['revision'], $revision['revision']);
+
+        $collectionHandler->drop($collection);
+    }
+
+    /**
+     *
+     * test for getting the revision for a non existing collection
+     */
+    public function testGetRevisionWithException()
+    {
+        $collectionHandler = $this->collectionHandler;
+        try {
+            $collectionHandler->getRevision("nonExisting");
+        } catch (\Exception $e) {
+            $this->assertEquals($e->getCode(), 404);
+        }
+    }
+
+
+    /**
+     * test for creation, rename, and delete of a collection
+     */
+    public function testCreateRenameAndDeleteCollection()
+    {
+        if (isCluster($this->connection)) {
+            // don't execute this test in a cluster
+            return;
+        }
+
+        $collection = $this->collection;
+        $collectionHandler = $this->collectionHandler;
+
+
+        $name = 'ArangoDB_PHP_TestSuite_TestCollection_01';
+        $collection->setName($name);
+
+        $response = $collectionHandler->add($collection);
+
+        $this->assertTrue(is_numeric($response), 'Adding collection did not return an id!');
+
+        $resultingCollection = $collectionHandler->get($name);
+
+        $collectionHandler->rename(
+            $resultingCollection,
+            'ArangoDB_PHP_TestSuite_TestCollection_01_renamed'
+        );
+
+        $resultingCollectionRenamed = $collectionHandler->get('ArangoDB_PHP_TestSuite_TestCollection_01_renamed');
+        $newName = $resultingCollectionRenamed->getName();
+
+        $this->assertTrue(
+            $newName == 'ArangoDB_PHP_TestSuite_TestCollection_01_renamed',
+            'Collection was not renamed!'
+        );
+        $response = $collectionHandler->delete($resultingCollectionRenamed);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * test for creation, rename, and delete of a collection with wrong encoding
+     *
      * We expect an exception here:
      *
      * @expectedException \triagens\ArangoDb\ClientException
+     *
      */
-    public function testCreateDocumentWithWrongEncoding()
+    public function testCreateRenameAndDeleteCollectionWithWrongEncoding()
     {
-        $documentHandler = $this->documentHandler;
-        $isoKey          = iconv("UTF-8", "ISO-8859-1//TRANSLIT", "someWrongEncododedAttribute");
-        $isoValue        = iconv("UTF-8", "ISO-8859-1//TRANSLIT", "someWrongEncodedValueü");
+        $collection = $this->collection;
+        $collectionHandler = $this->collectionHandler;
 
-        $document   = Document::createFromArray(array($isoKey => $isoValue, 'someOtherAttribute' => 'someOtherValue'));
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
 
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $name = 'ArangoDB_PHP_TestSuite_TestCollection_01';
+        $collection->setName($name);
 
-        $resultingDocument = $documentHandler->get($this->collection->getId(), $documentId);
+        $response = $collectionHandler->add($collection);
 
-        $this->assertObjectHasAttribute('_id', $resultingDocument, '_id field should exist, empty or with an id');
-        $this->assertTrue($resultingDocument->someAttribute == 'someValue');
-        $this->assertTrue($resultingDocument->someOtherAttribute == 'someOtherValue');
+        $this->assertTrue(is_numeric($response), 'Adding collection did not return an id!');
 
-        $response = $documentHandler->delete($document);
+        $resultingCollection = $collectionHandler->get($name);
+
+        // inject wrong encoding
+        $isoValue = iconv("UTF-8", "ISO-8859-1//TRANSLIT", "ArangoDB_PHP_TestSuite_TestCollection_01_renamedü");
+
+        $collectionHandler->rename($resultingCollection, $isoValue);
+
+
+        $response = $collectionHandler->delete($resultingCollection);
         $this->assertTrue($response, 'Delete should return true!');
     }
 
 
     /**
-     * test for creation, get, and delete of a document given its settings through createFromArray()
+     * test for creation, get, and delete of a collection with waitForSync set to true
      */
-    public function testCreateDocumentWithCreateFromArrayGetAndDeleteDocument()
+    public function testCreateGetAndDeleteCollectionWithWaitForSyncTrueAndJournalSizeSet()
     {
+        $collection = $this->collection;
+        $collectionHandler = $this->collectionHandler;
+        $collection->setWaitForSync(true);
+        $collection->setJournalSize(1024 * 1024 * 2);
+        $resultingWaitForSyncAttribute = $collection->getWaitForSync();
+        $resultingJournalSizeAttribute = $collection->getJournalSize();
+
+
+        $this->assertTrue($resultingWaitForSyncAttribute, 'WaitForSync should be true!');
+        $this->assertTrue($resultingJournalSizeAttribute == 1024 * 1024 * 2, 'JournalSize should be 2MB!');
+
+        $name = 'ArangoDB_PHP_TestSuite_TestCollection_01';
+        $collection->setName($name);
+
+        $collectionHandler->add($collection);
+
+        // here we check the collectionHandler->getProperties function
+        $properties = $collectionHandler->getProperties($collection->getName());
+        $this->assertObjectHasAttribute(
+            '_waitForSync',
+            $properties,
+            'waiForSync field should exist, empty or with an id'
+        );
+        $this->assertObjectHasAttribute(
+            '_journalSize',
+            $properties,
+            'journalSize field should exist, empty or with an id'
+        );
+
+        // here we check the collectionHandler->unload() function
+        // First fill it a bit to make sure it's loaded...
         $documentHandler = $this->documentHandler;
 
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
         );
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
+        $documentHandler->add($collection->getName(), $document);
 
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentHandler->add($collection->getName(), $document);
 
-        $resultingDocument = $documentHandler->get($this->collection->getId(), $documentId);
+        $arrayOfDocuments = $collectionHandler->getAllIds($collection->getName());
 
-        $this->assertObjectHasAttribute('_id', $resultingDocument, '_id field should exist, empty or with an id');
-        $this->assertTrue($resultingDocument->someAttribute == 'someValue');
-        $this->assertTrue($resultingDocument->someOtherAttribute == 'someOtherValue');
+        $this->assertTrue(
+            (is_array($arrayOfDocuments) && (count($arrayOfDocuments) == 2)),
+            'Should return an array of 2 document ids!'
+        );
 
-        $response = $documentHandler->delete($document);
+        //now check
+        $unloadResult = $collectionHandler->unload($collection->getName());
+        $unloadResult = $unloadResult->getJson();
+        $this->assertArrayHasKey('status', $unloadResult, 'status field should exist');
+        $this->assertTrue(
+            ($unloadResult['status'] == 4 || $unloadResult['status'] == 2),
+            'Collection status should be 4 (in the process of being unloaded) or 2 (unloaded). Found: ' . $unloadResult['status'] . '!'
+        );
+
+
+        // here we check the collectionHandler->load() function
+        $loadResult = $collectionHandler->load($collection->getName());
+        $loadResult = $loadResult->getJson();
+        $this->assertArrayHasKey('status', $loadResult, 'status field should exist');
+        $this->assertTrue(
+            $loadResult['status'] == 3,
+            'Collection status should be 3(loaded). Found: ' . $unloadResult['status'] . '!'
+        );
+
+
+        $resultingWaitForSyncAttribute = $collection->getWaitForSync();
+        $resultingJournalSizeAttribute = $collection->getJournalSize();
+        $this->assertTrue($resultingWaitForSyncAttribute, 'Server waitForSync should return true!');
+        $this->assertTrue($resultingJournalSizeAttribute == 1024 * 1024 * 2, 'JournalSize should be 2MB!');
+
+        $response = $collectionHandler->delete($collection);
         $this->assertTrue($response, 'Delete should return true!');
     }
 
 
     /**
-     * test for creation, get by example, and delete of a document given its settings through createFromArray()
+     * test for creation, get, and delete of a collection given its settings through createFromArray() and waitForSync set to true
      */
-    public function testCreateDocumentWithCreateFromArrayGetByExampleAndDeleteDocument()
+    public function testCreateGetAndDeleteCollectionThroughCreateFromArrayWithWaitForSyncTrue()
     {
-        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
 
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01', 'waitForSync' => true)
         );
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
+        $response = $collectionHandler->add($collection);
 
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $collectionHandler->get($response);
 
-        $cursor = $documentHandler->getByExample($this->collection->getId(), $document);
+        $resultingAttribute = $collection->getWaitForSync();
+        $this->assertTrue($resultingAttribute, 'Server waitForSync should return true!');
 
-        $this->assertInstanceOf('triagens\ArangoDb\Cursor', $cursor);
-        $resultingDocument = $cursor->current();
-
-        $this->assertTrue($resultingDocument->someAttribute == 'someValue');
-        $this->assertTrue($resultingDocument->someOtherAttribute == 'someOtherValue');
-
-        $response = $documentHandler->delete($document);
+        $response = $collectionHandler->delete($collection);
         $this->assertTrue($response, 'Delete should return true!');
     }
 
 
     /**
-     * test for creation, get by example, and delete of a document given its settings through createFromArray()
+     * test for creation of documents, and removal by keys
      */
-    public function testCreateDocumentWithCreateFromArrayGetByExampleWithOptionsAndDeleteDocument()
+    public function testRemoveByKeys()
     {
         $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
 
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01', 'waitForSync' => false)
         );
-        $documentId = $documentHandler->add($this->collection->getId(), $document, array('waitForSync' => true));
-
-        $document2   = Document::createFromArray(
-                               array('someAttribute' => 'someValue', 'someOtherAttribute2' => 'someOtherValue2')
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
         );
-        $documentId2 = $documentHandler->add($this->collection->getId(), $document2, array('waitForSync' => true));
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
 
         $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
         $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
 
-        $exampleDocument = Document::createFromArray(
-                                   array('someAttribute' => 'someValue')
+        $keys = array($documentId, $documentId2, $documentId3);
+        $result = $collectionHandler->removeByKeys($collection->getId(), $keys);
+        $this->assertEquals(array("removed" => 3, "ignored" => 0), $result);
+    }
+
+
+    /**
+     * test for removal by keys with unknown collection
+     * @expectedException \triagens\ArangoDb\ServerException
+     */
+    public function testRemoveByKeysCollectionNotFound()
+    {
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $keys = array("foo");
+        $result = $collectionHandler->removeByKeys("ThisDoesNotExist", $keys);
+    }
+
+
+    /**
+     * test for creation of documents, and removal by keys
+     */
+    public function testRemoveByKeysNotFound()
+    {
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01', 'waitForSync' => false)
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+        $keys = array("foo", "bar", "baz");
+        $result = $collectionHandler->removeByKeys($collection->getId(), $keys);
+        $this->assertEquals(array("removed" => 0, "ignored" => 3), $result);
+    }
+
+
+    /**
+     * test for creation of documents, and removal by example, using an empty example
+     */
+    public function testCreateDocumentsAndRemoveByExampleEmptyExample()
+    {
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01')
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+        $result = $collectionHandler->removeByExample($collection->getId(), array());
+        $this->assertEquals(3, $result);
+    }
+
+
+    /**
+     * test for update by example, using an empty example
+     */
+    public function testCreateDocumentsAndUpdateByExampleEmptyExample()
+    {
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01')
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+        $result = $collectionHandler->updateByExample($collection->getId(), array(), array('foo' => 'bar'));
+        $this->assertEquals(3, $result);
+    }
+
+
+    /**
+     * test for update by example, using an empty update example
+     */
+    public function testCreateDocumentsAndUpdateByExampleEmptyUpdateExample()
+    {
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01')
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+        $result = $collectionHandler->updateByExample($collection->getId(), array(), array());
+        $this->assertEquals(3, $result);
+    }
+
+
+    /**
+     * test for replace by example, using an empty example
+     */
+    public function testCreateDocumentsAndReplaceByExampleEmptyExample()
+    {
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01')
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+        $result = $collectionHandler->replaceByExample($collection->getId(), array(), array('foo' => 'bar'));
+        $this->assertEquals(3, $result);
+    }
+
+    /**
+     * test for replace by example, using an empty example
+     */
+    public function testCreateDocumentsAndReplaceByExampleEmptyReplaceExample()
+    {
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01')
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+        $result = $collectionHandler->replaceByExample($collection->getId(), array(), array());
+        $this->assertEquals(3, $result);
+    }
+
+
+    /**
+     * test for query by example, using an empty example
+     */
+    public function testCreateDocumentsAndQueryByExampleEmptyExample()
+    {
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01')
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+        $cursor = $collectionHandler->byExample($collection->getId(), array());
+        $this->assertTrue(
+            $cursor->getCount() == 3,
+            'should return 3.'
+        );
+    }
+
+
+    /**
+     * test for creation of documents, and removal by example
+     */
+    public function testCreateDocumentsWithCreateFromArrayAndRemoveByExample()
+    {
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01', 'waitForSync' => true)
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+        $exampleDocument = Document::createFromArray(array('someOtherAttribute' => 'someOtherValue'));
+        $result = $collectionHandler->removeByExample($collection->getId(), $exampleDocument);
+        $this->assertTrue($result === 2);
+    }
+
+
+    /**
+     * test for creation of documents, and update and replace by example and finally removal by example
+     */
+    public function testCreateDocumentsWithCreateFromArrayUpdateReplaceAndRemoveByExample()
+    {
+        $this->collectionHandler = new CollectionHandler($this->connection);
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01', 'waitForSync' => true)
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+        $exampleDocument = Document::createFromArray(array('someOtherAttribute' => 'someOtherValue'));
+        $updateDocument = Document::createFromArray(array('someNewAttribute' => 'someNewValue'));
+
+        $result = $collectionHandler->updateByExample($collection->getId(), $exampleDocument, $updateDocument);
+        $this->assertTrue($result === 2);
+
+        $exampleDocument = Document::createFromArray(array('someAttribute' => 'someValue2'));
+        $replaceDocument = Document::createFromArray(
+            array(
+                'someAttribute' => 'someValue2replaced',
+                'someOtherAttribute' => 'someOtherValue2replaced'
+            )
+        );
+        $result = $collectionHandler->replaceByExample(
+            $collection->getId(),
+            $exampleDocument,
+            $replaceDocument
+        );
+        $this->assertTrue($result === 1);
+
+        $exampleDocument = Document::createFromArray(array('someOtherAttribute' => 'someOtherValue'));
+        $result = $collectionHandler->removeByExample($collection->getId(), $exampleDocument);
+        $this->assertTrue($result === 2);
+    }
+
+
+    /**
+     * test for creation of documents, and update and replace by example and finally removal by example
+     */
+    public function testCreateDocumentsFromArrayUpdateReplaceAndRemoveByExample()
+    {
+        $this->collectionHandler = new CollectionHandler($this->connection);
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01', 'waitForSync' => true)
+        );
+        $collectionHandler->add($collection);
+        $document = array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue');
+
+        $documentId = $documentHandler->save($collection->getId(), $document);
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+
+
+        $document2 = array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2');
+
+
+        $documentId2 = $documentHandler->save($collection->getId(), $document2);
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+
+
+        $document3 = array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue');
+
+        $documentId3 = $documentHandler->save($collection->getId(), $document3);
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+
+        $exampleDocument = array('someOtherAttribute' => 'someOtherValue');
+        $updateDocument = array('someNewAttribute' => 'someNewValue');
+
+        $result = $collectionHandler->updateByExample($collection->getId(), $exampleDocument, $updateDocument);
+        $this->assertTrue($result === 2);
+
+
+        $exampleDocument = array('someAttribute' => 'someValue2');
+        $replaceDocument =
+            array('someAttribute' => 'someValue2replaced', 'someOtherAttribute' => 'someOtherValue2replaced');
+
+        $result = $collectionHandler->replaceByExample(
+            $collection->getId(),
+            $exampleDocument,
+            $replaceDocument
+        );
+        $this->assertTrue($result === 1);
+
+
+        $exampleDocument = array('someOtherAttribute' => 'someOtherValue');
+        $result = $collectionHandler->removeByExample($collection->getId(), $exampleDocument);
+        $this->assertTrue($result === 2);
+    }
+
+
+    /**
+     * test for creation of documents, and update and replace by example and finally removal by example
+     */
+    public function testCreateDocumentsWithCreateFromArrayUpdateReplaceAndRemoveByExampleWithLimits()
+    {
+        $this->collectionHandler = new CollectionHandler($this->connection);
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01', 'waitForSync' => true)
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+        $exampleDocument = Document::createFromArray(array('someOtherAttribute' => 'someOtherValue'));
+        $updateDocument = Document::createFromArray(array('someNewAttribute' => 'someNewValue'));
+
+        $result = $collectionHandler->updateByExample(
+            $collection->getId(),
+            $exampleDocument,
+            $updateDocument,
+            array('limit' => 1)
+        );
+        $this->assertTrue($result === 1);
+
+        $exampleDocument = Document::createFromArray(array('someAttribute' => 'someValue2'));
+        $replaceDocument = Document::createFromArray(
+            array(
+                'someAttribute' => 'someValue2replaced',
+                'someOtherAttribute' => 'someOtherValue2replaced'
+            )
+        );
+        $result = $collectionHandler->replaceByExample(
+            $collection->getId(),
+            $exampleDocument,
+            $replaceDocument,
+            array('limit' => 2)
+        );
+        $this->assertTrue($result === 1);
+
+        $exampleDocument = Document::createFromArray(array('someOtherAttribute' => 'someOtherValue'));
+        $result = $collectionHandler->removeByExample(
+            $collection->getId(),
+            $exampleDocument,
+            array('limit' => 1)
+        );
+        $this->assertTrue($result === 1);
+    }
+
+
+    /**
+     * test for creation of documents, and update and replace by example and finally removal by example
+     */
+    public function testCreateDocumentsWithCreateFromArrayUpdateReplaceAndRemoveByExampleWithWaitForSync()
+    {
+        $this->collectionHandler = new CollectionHandler($this->connection);
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01', 'waitForSync' => true)
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+        $exampleDocument = Document::createFromArray(array('someOtherAttribute' => 'someOtherValue'));
+        $updateDocument = Document::createFromArray(array('someNewAttribute' => 'someNewValue'));
+
+        $result = $collectionHandler->updateByExample(
+            $collection->getId(),
+            $exampleDocument,
+            $updateDocument,
+            array('waitForSync' => true)
+        );
+        $this->assertTrue($result === 2);
+
+        $exampleDocument = Document::createFromArray(array('someAttribute' => 'someValue2'));
+        $replaceDocument = Document::createFromArray(
+            array(
+                'someAttribute' => 'someValue2replaced',
+                'someOtherAttribute' => 'someOtherValue2replaced'
+            )
+        );
+        $result = $collectionHandler->replaceByExample(
+            $collection->getId(),
+            $exampleDocument,
+            $replaceDocument,
+            array('waitForSync' => true)
+        );
+        $this->assertTrue($result === 1);
+
+        $exampleDocument = Document::createFromArray(array('someOtherAttribute' => 'someOtherValue'));
+        $result = $collectionHandler->removeByExample(
+            $collection->getId(),
+            $exampleDocument,
+            array('waitForSync' => true)
+        );
+        $this->assertTrue($result === 2);
+    }
+
+
+    /**
+     * test for creation of documents, and update and replace by example and finally removal by example
+     */
+    public function testCreateDocumentsWithCreateFromArrayUpdateReplaceAndRemoveByExampleWithKeepNull()
+    {
+        $this->collectionHandler = new CollectionHandler($this->connection);
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01', 'waitForSync' => true)
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+
+        $exampleDocument = Document::createFromArray(array('someAttribute' => 'someValue2'));
+        $updateDocument = Document::createFromArray(
+            array('someNewAttribute' => 'someNewValue', 'someOtherAttribute' => null)
         );
 
-        $cursor = $documentHandler->getByExample(
-                                  $this->collection->getId(),
-                                  $exampleDocument,
-                                  array('batchSize' => 1, 'skip' => 0, 'limit' => 2)
+        $result = $collectionHandler->updateByExample(
+            $collection->getId(),
+            $exampleDocument,
+            $updateDocument,
+            array('keepNull' => false)
+        );
+        $this->assertTrue($result === 1);
+
+
+        $exampleDocument = Document::createFromArray(array('someNewAttribute' => 'someNewValue'));
+        $cursor = $collectionHandler->byExample($collection->getId(), $exampleDocument);
+        $this->assertTrue(
+            $cursor->getCount() == 1,
+            'should return 1.'
         );
 
-        $this->assertInstanceOf('triagens\ArangoDb\Cursor', $cursor);
+        $exampleDocument = Document::createFromArray(array('someOtherAttribute' => 'someOtherValue'));
+        $result = $collectionHandler->removeByExample(
+            $collection->getId(),
+            $exampleDocument,
+            array('waitForSync' => true)
+        );
+        $this->assertTrue($result === 2);
+    }
+
+
+    /**
+     * test for creation of documents, and removal by example
+     */
+    public function testCreateDocumentsWithCreateFromArrayAndRemoveByExampleWithLimit()
+    {
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01', 'waitForSync' => true)
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+        $exampleDocument = Document::createFromArray(array('someOtherAttribute' => 'someOtherValue'));
+        $result = $collectionHandler->removeByExample(
+            $collection->getId(),
+            $exampleDocument,
+            array('limit' => 1)
+        );
+        $this->assertTrue($result === 1);
+    }
+
+
+    /**
+     * test for import of documents, Headers-Values Style
+     */
+    public function testImportFromFileUsingHeadersAndValues()
+    {
+        if (isCluster($this->connection)) {
+            // don't execute this test in a cluster
+            return;
+        }
+
+        $collectionHandler = $this->collectionHandler;
+        $result = $collectionHandler->importFromFile(
+            'importCollection_01_arango_unittests',
+            __DIR__ . '/files_for_tests/import_file_header_values.txt',
+            $options = array('createCollection' => true)
+        );
+
+        $this->assertTrue($result['error'] === false && $result['created'] == 2);
+
+        $statement = new Statement(
+            $this->connection, array(
+                                 "query" => '',
+                                 "count" => true,
+                                 "batchSize" => 1,
+                                 "sanitize" => true,
+                             )
+        );
+        $query = 'FOR u IN `importCollection_01_arango_unittests` SORT u._id ASC RETURN u';
+
+        $statement->setQuery($query);
+
+        $cursor = $statement->execute();
+
         $resultingDocument = null;
+
         foreach ($cursor as $key => $value) {
             $resultingDocument[$key] = $value;
         }
 
         $this->assertTrue(
-             ($resultingDocument[0]->someAttribute == 'someValue'),
-                 'Document returned did not contain expected data.'
+            ($resultingDocument[0]->getKey() == 'test1' && $resultingDocument[0]->firstName == 'Joe'),
+            'Document returned did not contain expected data.'
         );
 
         $this->assertTrue(
-             ($resultingDocument[1]->someAttribute == 'someValue'),
-                 'Document returned did not contain expected data.'
+            ($resultingDocument[1]->getKey() == 'test2' && $resultingDocument[1]->firstName == 'Jane'),
+            'Document returned did not contain expected data.'
         );
 
         $this->assertTrue(count($resultingDocument) == 2, 'Should be 2, was: ' . count($resultingDocument));
+    }
 
 
-        $cursor = $documentHandler->getByExample(
-                                  $this->collection->getId(),
-                                  $exampleDocument,
-                                  array('batchSize' => 1, 'skip' => 1)
+    /**
+     * test for import of documents, Line by Line Documents Style
+     */
+    public function testImportFromFileUsingDocumentsLineByLine()
+    {
+        if (isCluster($this->connection)) {
+            // don't execute this test in a cluster
+            return;
+        }
+
+        $collectionHandler = $this->collectionHandler;
+        $result = $collectionHandler->importFromFile(
+            'importCollection_01_arango_unittests',
+            __DIR__ . '/files_for_tests/import_file_line_by_line.txt',
+            $options = array('createCollection' => true, 'type' => 'documents')
         );
+        $this->assertTrue($result['error'] === false && $result['created'] == 2);
 
-        $this->assertInstanceOf('triagens\ArangoDb\Cursor', $cursor);
+        $statement = new Statement(
+            $this->connection, array(
+                                 "query" => '',
+                                 "count" => true,
+                                 "batchSize" => 2,
+                                 "sanitize" => true,
+                             )
+        );
+        $query = 'FOR u IN `importCollection_01_arango_unittests` SORT u._id ASC RETURN u';
+
+        $statement->setQuery($query);
+
+        $cursor = $statement->execute();
+
         $resultingDocument = null;
+
         foreach ($cursor as $key => $value) {
             $resultingDocument[$key] = $value;
         }
 
         $this->assertTrue(
-             ($resultingDocument[0]->someAttribute == 'someValue'),
-                 'Document returned did not contain expected data.'
+            ($resultingDocument[0]->getKey() == 'test1' && $resultingDocument[0]->firstName == 'Joe'),
+            'Document returned did not contain expected data.'
         );
 
-        $this->assertTrue(count($resultingDocument) == 1, 'Should be 1, was: ' . count($resultingDocument));
-
-
-        $cursor = $documentHandler->getByExample(
-                                  $this->collection->getId(),
-                                  $exampleDocument,
-                                  array('batchSize' => 1, 'limit' => 1)
+        $this->assertTrue(
+            ($resultingDocument[1]->getKey() == 'test2' && $resultingDocument[1]->firstName == 'Jane'),
+            'Document returned did not contain expected data.'
         );
 
-        $this->assertInstanceOf('triagens\ArangoDb\Cursor', $cursor);
+        $this->assertTrue(count($resultingDocument) == 2, 'Should be 2, was: ' . count($resultingDocument));
+    }
+
+
+    /**
+     * test for import of documents, Line by Line result-set Style
+     */
+    public function testImportFromFileUsingResultSet()
+    {
+        if (isCluster($this->connection)) {
+            // don't execute this test in a cluster
+            return;
+        }
+
+        $collectionHandler = $this->collectionHandler;
+        $result = $collectionHandler->importFromFile(
+            'importCollection_01_arango_unittests',
+            __DIR__ . '/files_for_tests/import_file_resultset.txt',
+            $options = array('createCollection' => true, 'type' => 'array')
+        );
+        $this->assertTrue($result['error'] === false && $result['created'] == 2);
+
+        $statement = new Statement(
+            $this->connection, array(
+                                 "query" => '',
+                                 "count" => true,
+                                 "batchSize" => 3,
+                                 "sanitize" => true,
+                             )
+        );
+        $query = 'FOR u IN `importCollection_01_arango_unittests` SORT u._id ASC RETURN u';
+
+        $statement->setQuery($query);
+
+        $cursor = $statement->execute();
+
         $resultingDocument = null;
+
         foreach ($cursor as $key => $value) {
             $resultingDocument[$key] = $value;
         }
+
         $this->assertTrue(
-             ($resultingDocument[0]->someAttribute == 'someValue'),
-                 'Document returned did not contain expected data.'
+            $cursor->getCount() == 2,
+            'should return 2.'
         );
-        $this->assertTrue(count($resultingDocument) == 1, 'Should be 1, was: ' . count($resultingDocument));
 
+        $this->assertTrue(
+            ($resultingDocument[0]->getKey() == 'test1' && $resultingDocument[0]->firstName == 'Joe'),
+            'Document returned did not contain expected data.'
+        );
 
-        $response = $documentHandler->delete($document);
-        $this->assertTrue($response, 'Delete should return true!');
+        $this->assertTrue(
+            ($resultingDocument[1]->getKey() == 'test2' && $resultingDocument[1]->firstName == 'Jane'),
+            'Document returned did not contain expected data.'
+        );
+
+        $this->assertTrue(count($resultingDocument) == 2, 'Should be 2, was: ' . count($resultingDocument));
     }
 
 
     /**
-     * test for creation, get by example, and delete of a document given its settings through createFromArray()
+     * test for import of documents by giving an array of documents
      */
-    public function testCreateDocumentWithCreateFromArrayGetFirstExampleAndDeleteDocument()
+    public function testImportFromArrayOfDocuments()
     {
-        $documentHandler = $this->documentHandler;
-
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
-        );
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
-
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
-
-        $resultingDocument = $this->collectionHandler->firstExample($this->collection->getId(), $document);
-        $this->assertInstanceOf('triagens\ArangoDb\Document', $resultingDocument);
-
-        $this->assertTrue($resultingDocument->someAttribute == 'someValue');
-        $this->assertTrue($resultingDocument->someOtherAttribute == 'someOtherValue');
-
-        $response = $documentHandler->delete($document);
-        $this->assertTrue($response, 'Delete should return true!');
-    }
-
-
-    /**
-     * test for updating a document using update()
-     */
-    public function testUpdateDocument()
-    {
-        $documentHandler = $this->documentHandler;
-
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
-        );
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
-
-        $patchDocument = new Document();
-        $patchDocument->set('_id', $document->getHandle());
-        $patchDocument->set('_rev', $document->getRevision());
-        $patchDocument->set('someOtherAttribute', 'someOtherValue2');
-        $result = $documentHandler->update($patchDocument);
-
-        $this->assertTrue($result);
-
-        $resultingDocument = $documentHandler->get($this->collection->getId(), $documentId);
-        $this->assertObjectHasAttribute('_id', $resultingDocument, '_id field should exist, empty or with an id');
-
-        $this->assertTrue(
-             ($resultingDocument->someAttribute == 'someValue'),
-                 'Should be :someValue, is: ' . $resultingDocument->someAttribute
-        );
-        $this->assertTrue(
-             ($resultingDocument->someOtherAttribute == 'someOtherValue2'),
-                 'Should be :someOtherValue2, is: ' . $resultingDocument->someOtherAttribute
-        );
-        $response = $documentHandler->delete($resultingDocument);
-        $this->assertTrue($response, 'Delete should return true!');
-    }
-
-
-    /**
-     * test for updating a document using update() with wrong encoding
-     * We expect an exception here:
-     *
-     * @expectedException \triagens\ArangoDb\ClientException
-     */
-    public function testUpdateDocumentWithWrongEncoding()
-    {
-        $documentHandler = $this->documentHandler;
-
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
-        );
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
-        $documentHandler->get($this->collection->getId(), $documentId);
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
-
-        $patchDocument = new Document();
-        $patchDocument->set('_id', $document->getHandle());
-        $patchDocument->set('_rev', $document->getRevision());
-
-        // inject wrong encoding
-        $isoValue = iconv("UTF-8", "ISO-8859-1//TRANSLIT", "someWrongEncodedValueü");
-
-        $patchDocument->set('someOtherAttribute', $isoValue);
-        $result = $documentHandler->update($patchDocument);
-
-        $this->assertTrue($result);
-
-        $resultingDocument = $documentHandler->get($this->collection->getId(), $documentId);
-        $this->assertObjectHasAttribute('_id', $resultingDocument, '_id field should exist, empty or with an id');
-
-        $this->assertTrue(
-             ($resultingDocument->someAttribute == 'someValue'),
-                 'Should be :someValue, is: ' . $resultingDocument->someAttribute
-        );
-        $this->assertTrue(
-             ($resultingDocument->someOtherAttribute == 'someOtherValue2'),
-                 'Should be :someOtherValue2, is: ' . $resultingDocument->someOtherAttribute
-        );
-        $response = $documentHandler->delete($resultingDocument);
-        $this->assertTrue($response, 'Delete should return true!');
-    }
-
-
-    /**
-     * test for updating a document using update()
-     */
-    public function testUpdateDocumentDoNotKeepNull()
-    {
-        $documentHandler = $this->documentHandler;
-
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
-        );
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
-
-        $patchDocument = new Document();
-        $patchDocument->set('_id', $document->getHandle());
-        $patchDocument->set('_rev', $document->getRevision());
-        $patchDocument->set('someAttribute', null);
-        $patchDocument->set('someOtherAttribute', 'someOtherValue2');
-        $result = $documentHandler->update($patchDocument, array("keepNull" => false));
-
-        $this->assertTrue($result);
-
-        $resultingDocument = $documentHandler->get($this->collection->getId(), $documentId);
-        $this->assertObjectHasAttribute('_id', $resultingDocument, '_id field should exist, empty or with an id');
-
-        $this->assertTrue(
-             ($resultingDocument->someAttribute == null),
-                 'Should be : null, is: ' . $resultingDocument->someAttribute
-        );
-        $this->assertTrue(
-             ($resultingDocument->someOtherAttribute == 'someOtherValue2'),
-                 'Should be :someOtherValue2, is: ' . $resultingDocument->someOtherAttribute
-        );
-        $response = $documentHandler->delete($resultingDocument);
-        $this->assertTrue($response, 'Delete should return true!');
-    }
-
-
-    /**
-     * test for replacing a document using replace()
-     */
-    public function testReplaceDocument()
-    {
-        $documentHandler = $this->documentHandler;
-
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
-        );
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
-
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
-
-        $document->set('someAttribute', 'someValue2');
-        $document->set('someOtherAttribute', 'someOtherValue2');
-        $result = $documentHandler->replace($document);
-
-        $this->assertTrue($result);
-        $resultingDocument = $documentHandler->get($this->collection->getId(), $documentId);
-
-        $this->assertObjectHasAttribute('_id', $resultingDocument, '_id field should exist, empty or with an id');
-
-        $this->assertTrue(
-             ($resultingDocument->someAttribute == 'someValue2'),
-                 'Should be :someValue2, is: ' . $resultingDocument->someAttribute
-        );
-        $this->assertTrue(
-             ($resultingDocument->someOtherAttribute == 'someOtherValue2'),
-                 'Should be :someOtherValue2, is: ' . $resultingDocument->someOtherAttribute
-        );
-
-        $response = $documentHandler->delete($resultingDocument);
-        $this->assertTrue($response, 'Delete should return true!');
-    }
-
-
-    /**
-     * test for replacing a document using replace() with wrong encoding
-     * We expect an exception here:
-     *
-     * @expectedException \triagens\ArangoDb\ClientException
-     */
-    public function testReplaceDocumentWithWrongEncoding()
-    {
-        $documentHandler = $this->documentHandler;
-
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
-        );
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
-
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
-
-        // inject wrong encoding
-        $isoKey   = iconv("UTF-8", "ISO-8859-1//TRANSLIT", "someWrongEncododedAttribute");
-        $isoValue = iconv("UTF-8", "ISO-8859-1//TRANSLIT", "someWrongEncodedValueü");
-
-        $document->set($isoKey, $isoValue);
-        $document->set('someOtherAttribute', 'someOtherValue2');
-        $result = $documentHandler->replace($document);
-
-        $this->assertTrue($result);
-        $resultingDocument = $documentHandler->get($this->collection->getId(), $documentId);
-
-        $this->assertObjectHasAttribute('_id', $resultingDocument, '_id field should exist, empty or with an id');
-
-        $this->assertTrue(
-             ($resultingDocument->someAttribute == 'someValue2'),
-                 'Should be :someValue2, is: ' . $resultingDocument->someAttribute
-        );
-        $this->assertTrue(
-             ($resultingDocument->someOtherAttribute == 'someOtherValue2'),
-                 'Should be :someOtherValue2, is: ' . $resultingDocument->someOtherAttribute
-        );
-
-        $response = $documentHandler->delete($resultingDocument);
-        $this->assertTrue($response, 'Delete should return true!');
-    }
-
-
-    /**
-     * test for deletion of a document with deleteById() not giving the revision
-     */
-    public function testDeleteDocumentWithDeleteByIdWithoutRevision()
-    {
-        $documentHandler = $this->documentHandler;
-
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
-        );
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
-
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
-
-        $document->set('someAttribute', 'someValue2');
-        $document->set('someOtherAttribute', 'someOtherValue2');
-        $result = $documentHandler->replace($document);
-
-        $this->assertTrue($result);
-        $resultingDocument = $documentHandler->get($this->collection->getId(), $documentId);
-
-        $this->assertObjectHasAttribute('_id', $resultingDocument, '_id field should exist, empty or with an id');
-
-        $this->assertTrue($resultingDocument->someAttribute == 'someValue2');
-        $this->assertTrue($resultingDocument->someOtherAttribute == 'someOtherValue2');
-
-        $response = $documentHandler->deleteById($this->collection->getId(), $documentId);
-        $this->assertTrue($response, 'Delete should return true!');
-    }
-
-
-    /**
-     * test for deletion of a document with deleteById() given the revision
-     */
-    public function testDeleteDocumentWithDeleteByIdWithRevisionAndPolicyIsError()
-    {
-        $documentHandler = $this->documentHandler;
-
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
-        );
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
-
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
-
-        $revision = $document->getRevision();
-        try {
-            $documentHandler->deleteById($this->collection->getId(), $documentId, $revision - 1000, 'error');
-        } catch (ServerException $e) {
-            $this->assertTrue(true);
+        if (isCluster($this->connection)) {
+            // don't execute this test in a cluster
+            return;
         }
 
-        $response = $documentHandler->deleteById($this->collection->getId(), $documentId, $revision, 'error');
-        $this->assertTrue($response, 'deleteById() should return true! (because correct revision given)');
-    }
+        $collectionHandler = $this->collectionHandler;
 
-
-    /**
-     * test for deletion of a document with deleteById() given the revision
-     */
-    public function testDeleteDocumentWithDeleteByIdWithRevisionAndPolicyIsLast()
-    {
-        $documentHandler = $this->documentHandler;
-
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
+        $document1 = Document::createFromArray(
+            array(
+                'firstName' => 'Joe',
+                'lastName' => 'Public',
+                'age' => 42,
+                'gender' => 'male',
+                '_key' => 'test1'
+            )
         );
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
-
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
-
-        $revision = $document->getRevision();
-
-        $response = $documentHandler->deleteById($this->collection->getId(), $documentId, $revision - 1000, 'last');
-        $this->assertTrue(
-             $response,
-             'deleteById() should return true! (because policy  is "last write wins")'
+        $document2 = Document::createFromArray(
+            array(
+                'firstName' => 'Jane',
+                'lastName' => 'Doe',
+                'age' => 31,
+                'gender' => 'female',
+                '_key' => 'test2'
+            )
         );
-    }
 
-
-    /**
-     * test for creation, update, get, and delete having update and delete doing revision checks.
-     */
-    public function testCreateUpdateGetAndDeleteDocumentWithRevisionCheck()
-    {
-        $documentHandler = $this->documentHandler;
-
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
+        $data = array($document1, $document2);
+        $result = $collectionHandler->import(
+            'importCollection_01_arango_unittests',
+            $data,
+            $options = array('createCollection' => true)
         );
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
 
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue($result['error'] === false && $result['created'] == 2);
 
-        $resultingDocument = $documentHandler->get($this->collection->getId(), $documentId);
+        $statement = new Statement(
+            $this->connection, array(
+                                 "query" => '',
+                                 "count" => true,
+                                 "batchSize" => 4,
+                                 "sanitize" => true,
+                             )
+        );
+        $query = 'FOR u IN `importCollection_01_arango_unittests` SORT u._id ASC RETURN u';
 
-        $this->assertObjectHasAttribute('_id', $resultingDocument, '_id field should exist, empty or with an id');
+        $statement->setQuery($query);
 
+        $cursor = $statement->execute();
 
-        // Set some new values on the attributes and include the revision in the _rev attribute
-        // This should result in a successful update
-        $document->set('someAttribute', 'someValue2');
-        $document->set('someOtherAttribute', 'someOtherValue2');
-        $document->setRevision($resultingDocument->getRevision());
+        $resultingDocument = null;
 
-        $result = $documentHandler->update($document, 'error');
-
-        $this->assertTrue($result);
-        $resultingDocument = $documentHandler->get($this->collection->getId(), $documentId);
-
-        $this->assertTrue($resultingDocument->someAttribute == 'someValue2');
-        $this->assertTrue($resultingDocument->someOtherAttribute == 'someOtherValue2');
-
-        // Set some new values on the attributes and include a fake revision in the _rev attribute
-        // This should result in a failure to update
-        $document->set('someOtherAttribute', 'someOtherValue3');
-        $document->setRevision($resultingDocument->getRevision() - 1000);
-        $e = null;
-        try {
-            $documentHandler->update($document, 'error');
-        } catch (\Exception $e) {
-            // don't bother us... just give us the $e
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
         }
-
-        $this->assertInstanceOf('Exception', $e);
-        $this->assertTrue($e->getMessage() == 'precondition failed');
-        $resultingDocument1 = $documentHandler->get($this->collection->getId(), $documentId);
 
         $this->assertTrue(
-             ($resultingDocument1->someAttribute == 'someValue2'),
-                 "This value should not have changed using UPDATE() - this is the behavior of REPLACE()"
+            ($resultingDocument[0]->getKey() == 'test1' && $resultingDocument[0]->firstName == 'Joe'),
+            'Document returned did not contain expected data.'
         );
-        $this->assertTrue($resultingDocument1->someOtherAttribute == 'someOtherValue2');
-        unset ($e);
 
-        $document = Document::createFromArray(array('someOtherAttribute' => 'someOtherValue3'));
-        $document->setInternalId($this->collection->getId() . '/' . $documentId);
-        // Set some new values on the attributes and  _rev attribute to NULL
-        // This should result in a successful update
-        try {
-            $documentHandler->update($document, 'error');
-        } catch (\Exception $e) {
-            // don't bother us... just give us the $e
-        }
-        $resultingDocument2 = $documentHandler->get($this->collection->getId(), $documentId);
+        $this->assertTrue(
+            ($resultingDocument[1]->getKey() == 'test2' && $resultingDocument[1]->firstName == 'Jane'),
+            'Document returned did not contain expected data.'
+        );
 
-        $this->assertTrue($resultingDocument2->someOtherAttribute == 'someOtherValue3');
-
-        // Set some new values on the attributes and include the revision in the _rev attribute
-        // this is only to update the doc and get a new revision for testing the delete method below
-        // This should result in a successful update
-        $document->set('someAttribute', 'someValue');
-        $document->set('someOtherAttribute', 'someOtherValue2');
-        $document->set('_rev', $resultingDocument2->getRevision());
-
-        $result = $documentHandler->update($document, 'error');
-
-        $this->assertTrue($result);
-        $resultingDocument3 = $documentHandler->get($this->collection->getId(), $documentId);
-
-        $this->assertTrue($resultingDocument3->someAttribute == 'someValue');
-        $this->assertTrue($resultingDocument3->someOtherAttribute == 'someOtherValue2');
-
-        $e = null;
-        try {
-            $documentHandler->delete($resultingDocument, "error");
-        } catch (\Exception $e) {
-            // don't bother us... just give us the $e
-        }
-
-        $this->assertInstanceOf('Exception', $e, "Delete should have raised an exception here");
-        $this->assertTrue($e->getMessage() == 'precondition failed');
-        unset ($e);
-
-        $response = $documentHandler->delete($resultingDocument3, "error");
-        $this->assertTrue($response, 'Delete should return true!');
+        $this->assertTrue(count($resultingDocument) == 2, 'Should be 2, was: ' . count($resultingDocument));
     }
 
 
     /**
-     * test for creation, update, get, and delete having update and delete doing revision checks.
+     * test for import of documents by giving an array of documents
      */
-    public function testCreateReplaceGetAndDeleteDocumentWithRevisionCheck()
+    public function testImportFromStringWithValuesAndHeaders()
     {
-        $documentHandler = $this->documentHandler;
-
-        $document   = Document::createFromArray(
-                              array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
-        );
-        $documentId = $documentHandler->add($this->collection->getId(), $document);
-
-        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
-
-        $resultingDocument = $documentHandler->get($this->collection->getId(), $documentId);
-
-        $this->assertObjectHasAttribute('_id', $resultingDocument, '_id field should exist, empty or with an id');
-
-
-        // Set some new values on the attributes and include the revision in the _rev attribute
-        // This should result in a successful update
-        $document->set('someAttribute', 'someValue2');
-        $document->set('someOtherAttribute', 'someOtherValue2');
-        $document->set('_rev', $resultingDocument->getRevision());
-
-        $result = $documentHandler->update($document, 'error');
-
-        $this->assertTrue($result);
-        $resultingDocument = $documentHandler->get($this->collection->getId(), $documentId);
-
-        $this->assertTrue($resultingDocument->someAttribute == 'someValue2');
-        $this->assertTrue($resultingDocument->someOtherAttribute == 'someOtherValue2');
-
-        // Set some new values on the attributes and include a fake revision in the _rev attribute
-        // This should result in a failure to update
-        $document->set('someAttribute', 'someValue3');
-        $document->set('someOtherAttribute', 'someOtherValue3');
-        $document->set('_rev', $resultingDocument->getRevision() - 1000);
-
-        $e = null;
-
-        try {
-            $documentHandler->update($document, 'error');
-        } catch (\Exception $e) {
-            // don't bother us... just give us the $e
+        if (isCluster($this->connection)) {
+            // don't execute this test in a cluster
+            return;
         }
 
-        $this->assertInstanceOf('Exception', $e);
-        $this->assertTrue($e->getMessage() == 'precondition failed');
-        $resultingDocument1 = $documentHandler->get($this->collection->getId(), $documentId);
+        $collectionHandler = $this->collectionHandler;
 
-        $this->assertTrue($resultingDocument1->someAttribute == 'someValue2');
-        $this->assertTrue($resultingDocument1->someOtherAttribute == 'someOtherValue2');
-        unset ($e);
+        $data = '[ "firstName", "lastName", "age", "gender", "_key"]
+               [ "Joe", "Public", 42, "male", "test1" ]
+               [ "Jane", "Doe", 31, "female", "test2" ]';
+
+        $result = $collectionHandler->import(
+            'importCollection_01_arango_unittests',
+            $data,
+            $options = array('createCollection' => true)
+        );
+
+        $this->assertTrue($result['error'] === false && $result['created'] == 2);
+
+        $statement = new Statement(
+            $this->connection, array(
+                                 "query" => '',
+                                 "count" => true,
+                                 "batchSize" => 5,
+                                 "sanitize" => true,
+                             )
+        );
+        $query = 'FOR u IN `importCollection_01_arango_unittests` SORT u._id ASC RETURN u';
+
+        $statement->setQuery($query);
+
+        $cursor = $statement->execute();
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+        }
+
+        $this->assertTrue(
+            ($resultingDocument[0]->getKey() == 'test1' && $resultingDocument[0]->firstName == 'Joe'),
+            'Document returned did not contain expected data.'
+        );
+
+        $this->assertTrue(
+            ($resultingDocument[1]->getKey() == 'test2' && $resultingDocument[1]->firstName == 'Jane'),
+            'Document returned did not contain expected data.'
+        );
+
+        $this->assertTrue(count($resultingDocument) == 2, 'Should be 2, was: ' . count($resultingDocument));
+    }
+
+
+    /**
+     * test for import of documents by giving an array of documents
+     */
+    public function testImportFromStringUsingDocumentsLineByLine()
+    {
+        if (isCluster($this->connection)) {
+            // don't execute this test in a cluster
+            return;
+        }
+
+        $collectionHandler = $this->collectionHandler;
+
+        $data = '{ "firstName" : "Joe", "lastName" : "Public", "age" : 42, "gender" : "male", "_key" : "test1"}
+               { "firstName" : "Jane", "lastName" : "Doe", "age" : 31, "gender" : "female", "_key" : "test2"}';
+
+        $result = $collectionHandler->import(
+            'importCollection_01_arango_unittests',
+            $data,
+            $options = array('createCollection' => true, 'type' => 'documents')
+        );
+
+        $this->assertTrue($result['error'] === false && $result['created'] == 2);
+
+        $statement = new Statement(
+            $this->connection, array(
+                                 "query" => '',
+                                 "count" => true,
+                                 "batchSize" => 100,
+                                 "sanitize" => true,
+                             )
+        );
+        $query = 'FOR u IN `importCollection_01_arango_unittests` SORT u._id ASC RETURN u';
+
+        $statement->setQuery($query);
+
+        $cursor = $statement->execute();
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+        }
+
+        $this->assertTrue(
+            ($resultingDocument[0]->getKey() == 'test1' && $resultingDocument[0]->firstName == 'Joe'),
+            'Document returned did not contain expected data.'
+        );
+
+        $this->assertTrue(
+            ($resultingDocument[1]->getKey() == 'test2' && $resultingDocument[1]->firstName == 'Jane'),
+            'Document returned did not contain expected data.'
+        );
+
+        $this->assertTrue(count($resultingDocument) == 2, 'Should be 2, was: ' . count($resultingDocument));
+    }
+
+
+    /**
+     * test for import of documents by giving an array of documents
+     */
+    public function testImportFromStringUsingDocumentsUsingResultset()
+    {
+        if (isCluster($this->connection)) {
+            // don't execute this test in a cluster
+            return;
+        }
+
+        $collectionHandler = $this->collectionHandler;
+
+        $data = '[{ "firstName" : "Joe", "lastName" : "Public", "age" : 42, "gender" : "male", "_key" : "test1"},
+{ "firstName" : "Jane", "lastName" : "Doe", "age" : 31, "gender" : "female", "_key" : "test2"}]';
+
+        $result = $collectionHandler->import(
+            'importCollection_01_arango_unittests',
+            $data,
+            $options = array('createCollection' => true, 'type' => 'array')
+        );
+
+        $this->assertTrue($result['error'] === false && $result['created'] == 2);
+
+        $statement = new Statement(
+            $this->connection, array(
+                                 "query" => '',
+                                 "count" => true,
+                                 "batchSize" => 1000,
+                                 "sanitize" => true,
+                             )
+        );
+        $query = 'FOR u IN `importCollection_01_arango_unittests` SORT u._id ASC RETURN u';
+
+        $statement->setQuery($query);
+
+        $cursor = $statement->execute();
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+        }
+
+        $this->assertTrue(
+            ($resultingDocument[0]->getKey() == 'test1' && $resultingDocument[0]->firstName == 'Joe'),
+            'Document returned did not contain expected data.'
+        );
+
+        $this->assertTrue(
+            ($resultingDocument[1]->getKey() == 'test2' && $resultingDocument[1]->firstName == 'Jane'),
+            'Document returned did not contain expected data.'
+        );
+
+        $this->assertTrue(count($resultingDocument) == 2, 'Should be 2, was: ' . count($resultingDocument));
+    }
+
+
+    /**
+     * test for creation, getAllIds, and delete of a collection given its settings through createFromArray()
+     */
+    public function testCreateGetAllIdsAndDeleteCollectionThroughCreateFromArray()
+    {
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01'));
+        $collectionHandler->add($collection);
+
+        $documentHandler = $this->documentHandler;
 
         $document = Document::createFromArray(
-                            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue3')
+            array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
         );
-        $document->setInternalId($this->collection->getId() . '/' . $documentId);
-        // Set some new values on the attributes and  _rev attribute to NULL
-        // This should result in a successful update
-        try {
-            $documentHandler->update($document, 'error');
-        } catch (\Exception $e) {
-            // don't bother us... just give us the $e
-        }
-        $resultingDocument2 = $documentHandler->get($this->collection->getId(), $documentId);
+        $documentHandler->add($collection->getId(), $document);
 
-        $this->assertTrue($resultingDocument2->someAttribute == 'someValue3');
-        $this->assertTrue($resultingDocument2->someOtherAttribute == 'someOtherValue3');
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentHandler->add($collection->getId(), $document);
 
-        // Set some new values on the attributes and include the revision in the _rev attribute
-        // this is only to update the doc and get a new revision for testing the delete method below
-        // This should result in a successful update
-        $document->set('someAttribute', 'someValue2');
-        $document->set('someOtherAttribute', 'someOtherValue2');
-        $document->set('_rev', $resultingDocument2->getRevision());
+        $arrayOfDocuments = $collectionHandler->getAllIds($collection->getId());
 
-        $result = $documentHandler->update($document, 'error');
+        $this->assertTrue(
+            (is_array($arrayOfDocuments) && (count($arrayOfDocuments) == 2)),
+            'Should return an array of 2 document ids!'
+        );
 
-        $this->assertTrue($result);
-        $resultingDocument3 = $documentHandler->get($this->collection->getId(), $documentId);
-
-        $this->assertTrue($resultingDocument3->someAttribute == 'someValue2');
-        $this->assertTrue($resultingDocument3->someOtherAttribute == 'someOtherValue2');
-
-        $e = null;
-        try {
-            $documentHandler->delete($resultingDocument, "error");
-        } catch (\Exception $e) {
-            // don't bother us... just give us the $e
-        }
-
-        $this->assertInstanceOf('Exception', $e, "Delete should have raised an exception here");
-        $this->assertTrue($e->getMessage() == 'precondition failed');
-        unset ($e);
-
-        $response = $documentHandler->delete($resultingDocument3, "error");
+        $response = $collectionHandler->delete($collection);
         $this->assertTrue($response, 'Delete should return true!');
     }
 
 
     /**
-     * test to set some attributes and get all attributes of the document through getAll()
-     * Also testing to optionally get internal attributes _id and _rev
+     * test for creation, all, and delete of a collection
+     */
+    public function testCreateAndAllAndDeleteCollection()
+    {
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01'));
+        $collectionHandler->add($collection);
+
+        $documentHandler = $this->documentHandler;
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentHandler->add($collection->getId(), $document);
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentHandler->add($collection->getId(), $document);
+
+        $cursor = $collectionHandler->all($collection->getId());
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+        }
+
+        $this->assertTrue(count($resultingDocument) == 2, 'Should be 2, was: ' . count($resultingDocument));
+
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * test for creation, all with hiddenAttributes, and delete of a collection
+     */
+    public function testCreateAndIssueAllWithHiddenAttributesAndDeleteCollection()
+    {
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01'));
+        $collectionHandler->add($collection);
+
+        $documentHandler = $this->documentHandler;
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentHandler->add($collection->getId(), $document);
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentHandler->add($collection->getId(), $document);
+
+        $cursor = $collectionHandler->all(
+            $collection->getId(), [
+                                    '_ignoreHiddenAttributes' => false,
+                                    '_hiddenAttributes' => ['someOtherAttribute']
+                                ]
+        );
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+            $doc = $resultingDocument[$key]->getAll();
+            $this->assertArrayNotHasKey('someOtherAttribute', $doc);
+        }
+
+        $cursor = $collectionHandler->all(
+            $collection->getId(), [
+                                    '_ignoreHiddenAttributes' => true,
+                                    '_hiddenAttributes' => ['someOtherAttribute']
+                                ]
+        );
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+            $doc = $resultingDocument[$key]->getAll();
+            $this->assertArrayHasKey('someOtherAttribute', $doc);
+        }
+
+
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+    /**
+     * test for creation, all with hiddenAttributes but different Doc->GetAll options, and delete of a collection
+     */
+    public function testCreateAndIssueAllWithHiddenAttributesButDifferentDocGetAllOptionsAndDeleteCollection()
+    {
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01'));
+        $collectionHandler->add($collection);
+
+        $documentHandler = $this->documentHandler;
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentHandler->add($collection->getId(), $document);
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentHandler->add($collection->getId(), $document);
+
+        $cursor = $collectionHandler->all(
+            $collection->getId(), [
+                                    '_ignoreHiddenAttributes' => false,
+                                    '_hiddenAttributes' => ['someOtherAttribute']
+                                ]
+        );
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+            $doc = $resultingDocument[$key]->getAll();
+            $this->assertArrayNotHasKey('someOtherAttribute', $doc);
+        }
+
+        $cursor = $collectionHandler->all(
+            $collection->getId(), [
+                                    '_ignoreHiddenAttributes' => false,
+                                    '_hiddenAttributes' => ['someOtherAttribute']
+                                ]
+        );
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+            $doc = $resultingDocument[$key]->getAll(
+                [
+                    '_ignoreHiddenAttributes' => true
+                ]
+            );
+            $this->assertArrayHasKey('someOtherAttribute', $doc);
+        }
+
+        $cursor = $collectionHandler->all(
+            $collection->getId(), [
+                                    '_ignoreHiddenAttributes' => false,
+                                    '_hiddenAttributes' => ['someOtherAttribute']
+                                ]
+        );
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+            $doc = $resultingDocument[$key]->getAll(
+                [
+                    '_hiddenAttributes' => []
+                ]
+            );
+            $this->assertArrayHasKey('someOtherAttribute', $doc);
+        }
+
+        $cursor = $collectionHandler->all(
+            $collection->getId(), [
+                                    '_ignoreHiddenAttributes' => true,
+                                    '_hiddenAttributes' => ['someOtherAttribute']
+                                ]
+        );
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+            $doc = $resultingDocument[$key]->getAll();
+            $this->assertArrayHasKey('someOtherAttribute', $doc);
+        }
+
+        $cursor = $collectionHandler->all(
+            $collection->getId(), [
+                                    '_ignoreHiddenAttributes' => true,
+                                    '_hiddenAttributes' => []
+                                ]
+        );
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+            $doc = $resultingDocument[$key]->getAll(
+                [
+                    '_ignoreHiddenAttributes' => false,
+                    '_hiddenAttributes' => ['someOtherAttribute']
+                ]
+            );
+            $this->assertArrayNotHasKey('someOtherAttribute', $doc);
+        }
+
+        $cursor = $collectionHandler->all(
+            $collection->getId(), [
+                                    '_ignoreHiddenAttributes' => true
+                                ]
+        );
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+            $doc = $resultingDocument[$key]->getAll(
+                [
+                    '_ignoreHiddenAttributes' => false,
+                    '_hiddenAttributes' => ['someOtherAttribute']
+                ]
+            );
+            print_r($resultingDocument[$key]);
+
+            $this->assertArrayNotHasKey('someOtherAttribute', $doc);
+        }
+
+
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * test for creation, all with limit, and delete of a collection
+     */
+    public function testCreateAndAllWithLimitAndDeleteCollection()
+    {
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01'));
+        $collectionHandler->add($collection);
+
+        $documentHandler = $this->documentHandler;
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentHandler->add($collection->getId(), $document);
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentHandler->add($collection->getId(), $document);
+
+        $cursor = $collectionHandler->all($collection->getId(), array('limit' => 1));
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+        }
+
+        // 2 Documents limited to 1, the result should be 1
+        $this->assertTrue(count($resultingDocument) == 1, 'Should be 1, was: ' . count($resultingDocument));
+
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * test for creation, all with skip, and delete of a collection
+     */
+    public function testCreateAndAllWithSkipAndDeleteCollection()
+    {
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01'));
+        $collectionHandler->add($collection);
+
+        $documentHandler = $this->documentHandler;
+
+        for ($i = 0; $i < 3; $i++) {
+            $document = Document::createFromArray(
+                array('someAttribute' => 'someValue ' . $i, 'someOtherAttribute' => 'someValue ' . $i)
+            );
+            $documentHandler->add($collection->getId(), $document);
+        }
+
+        $cursor = $collectionHandler->all($collection->getId(), array('skip' => 1));
+
+        $resultingDocument = null;
+
+        foreach ($cursor as $key => $value) {
+            $resultingDocument[$key] = $value;
+        }
+
+        // With 3 Documents and skipping 1, the result should be 2
+        $this->assertTrue(count($resultingDocument) == 2, 'Should be 2, was: ' . count($resultingDocument));
+
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * test for creating, filling with documents and truncating the collection.
+     */
+    public function testCreateFillAndTruncateCollection()
+    {
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01'));
+        $collectionHandler->add($collection);
+
+        $documentHandler = $this->documentHandler;
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentHandler->add($collection->getId(), $document);
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentHandler->add($collection->getId(), $document);
+
+        $arrayOfDocuments = $collectionHandler->getAllIds($collection->getId());
+
+        $this->assertTrue(
+            (is_array($arrayOfDocuments) && (count($arrayOfDocuments) == 2)),
+            'Should return an array of 2 document ids!'
+        );
+
+        //truncate, given the collection object
+        $collectionHandler->truncate($collection);
+
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentHandler->add($collection->getId(), $document);
+
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentHandler->add($collection->getId(), $document);
+
+        $arrayOfDocuments = $collectionHandler->getAllIds($collection->getId());
+
+        $this->assertTrue(
+            (is_array($arrayOfDocuments) && (count($arrayOfDocuments) == 2)),
+            'Should return an array of 2 document ids!'
+        );
+
+        //truncate, given the collection id
+        $collectionHandler->truncate($collection->getId());
+
+
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * test to set some attributes and get all attributes of the collection through getAll()
      */
     public function testGetAll()
     {
-        $documentHandler = $this->documentHandler;
-
-        $document = Document::createFromArray(
-                            array(
-                                 'someAttribute'      => 'someValue',
-                                 'someOtherAttribute' => 'someOtherValue',
-                                 'someThirdAttribute' => 'someThirdValue'
-                            )
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01', 'waitForSync' => true)
         );
-        $documentHandler->add($this->collection->getId(), $document);
+        $result = $collection->getAll();
 
-        // set hidden fields
-        $document->setHiddenAttributes(array('someThirdAttribute'));
-
-        $result = $document->getAll();
-
-        $this->assertTrue($result['someAttribute'] == 'someValue');
-        $this->assertTrue($result['someOtherAttribute'] == 'someOtherValue');
-
-        // Check if the hidden field is actually hidden...
-        $this->assertArrayNotHasKey('someThirdAttribute', $result);
-
-        $result = $document->getAll(true);
-        $this->assertArrayHasKey('_id', $result);
-        $this->assertArrayHasKey('_rev', $result);
-    }
-    
-    /**
-     * test to set some attributes and get all attributes of the document through getAll()
-     * Also testing to optionally get internal attributes _id and _rev
-     */
-    public function testHiddenAttributesGetAll()
-    {
-        $documentHandler = $this->documentHandler;
-
-        $document = Document::createFromArray(
-                            array(
-                                 '_key'     => 'test1',
-                                 'isActive' => true,
-                                 'password' => 'secret',
-                                 'name'     => 'foo'
-                                 )
-        );
-        $documentHandler->add($this->collection->getId(), $document);
-        
-        $document = Document::createFromArray(
-                            array(
-                                 '_key'     => 'test2',
-                                 'isActive' => false,
-                                 'password' => 'secret',
-                                 'name'     => 'bar'
-                                 )
-        );
-        $documentHandler->add($this->collection->getId(), $document);
-
-
-        $document = $documentHandler->getById($this->collection->getId(), "test1");
-        $document->setHiddenAttributes(array('password'));
-        $result = $document->getAll();
-
-        $this->assertTrue($result['isActive']);
-        $this->assertEquals('foo', $result['name']);
-        $this->assertArrayNotHasKey('password', $result);
-        
-        // test with even more hidden attributes
-        $document = $documentHandler->getById($this->collection->getId(), "test1");
-        $document->setHiddenAttributes(array('isActive', 'password', 'foobar'));
-        $result = $document->getAll();
-
-        $this->assertArrayNotHasKey('isActive', $result);
-        $this->assertEquals('foo', $result['name']);
-        $this->assertArrayNotHasKey('password', $result);
-    
-        // fetch again, without hidden fields now
-        $document = $documentHandler->getById($this->collection->getId(), "test1");
-        $result = $document->getAll();
-
-        $this->assertTrue($result['isActive']);
-        $this->assertEquals('foo', $result['name']);
-        $this->assertEquals('secret', $result['password']);
-        
-            
-        $document = $documentHandler->getById($this->collection->getId(), "test2");
-        $document->setHiddenAttributes(array('password'));
-        $result = $document->getAll();
-
-        $this->assertFalse($result['isActive']);
-        $this->assertEquals('bar', $result['name']);
-        $this->assertArrayNotHasKey('password', $result);
-        
-        // test with even more hidden attributes
-        $document = $documentHandler->getById($this->collection->getId(), "test2");
-        $document->setHiddenAttributes(array('isActive', 'password', 'foobar'));
-        $result = $document->getAll();
-
-        $this->assertArrayNotHasKey('isActive', $result);
-        $this->assertEquals('bar', $result['name']);
-        $this->assertArrayNotHasKey('password', $result);
-        
-        // fetch again, without hidden fields now
-        $document = $documentHandler->getById($this->collection->getId(), "test2");
-        $result = $document->getAll();
-
-        $this->assertFalse($result['isActive']);
-        $this->assertEquals('bar', $result['name']);
-        $this->assertEquals('secret', $result['password']);
-    }
-
-
-    /**
-     * Test for correct exception codes if nonexistent objects are tried to be gotten, replaced, updated or removed
-     */
-    public function testGetReplaceUpdateAndRemoveOnNonExistentObjects()
-    {
-        // Setup objects
-        $documentHandler = $this->documentHandler;
-        $document        = Document::createFromArray(
-                                   array(
-                                        'someAttribute'      => 'someValue',
-                                        'someOtherAttribute' => 'someOtherValue',
-                                        'someThirdAttribute' => 'someThirdValue'
-                                   )
-        );
-
-
-        // Try to get a non-existent document out of a nonexistent collection
-        // This should cause an exception with a code of 404
-        try {
-            $e = null;
-            $documentHandler->get('nonExistentCollection', 'nonexistentId');
-        } catch (\Exception $e) {
-            // don't bother us... just give us the $e
-        }
-        $this->assertInstanceOf('triagens\ArangoDb\ServerException', $e);
-        $this->assertTrue($e->getCode() == 404, 'Should be 404, instead got: ' . $e->getCode());
-
-
-        // Try to get a non-existent document out of an existent collection
-        // This should cause an exception with a code of 404
-        try {
-            $e = null;
-            $documentHandler->get($this->collection->getId(), 'nonexistentId');
-        } catch (\Exception $e) {
-            // don't bother us... just give us the $e
-        }
-        $this->assertInstanceOf('triagens\ArangoDb\ServerException', $e);
-        $this->assertTrue($e->getCode() == 404, 'Should be 404, instead got: ' . $e->getCode());
-
-
-        // Try to update a non-existent document
-        // This should cause an exception with a code of 404
-        try {
-            $e = null;
-            $documentHandler->updateById($this->collection->getId(), 'nonexistentId', $document);
-        } catch (\Exception $e) {
-            // don't bother us... just give us the $e
-        }
-        $this->assertInstanceOf('triagens\ArangoDb\ServerException', $e);
-        $this->assertTrue($e->getCode() == 404, 'Should be 404, instead got: ' . $e->getCode());
-
-
-        // Try to replace a non-existent document
-        // This should cause an exception with a code of 404
-        try {
-            $e = null;
-            $documentHandler->replaceById($this->collection->getId(), 'nonexistentId', $document);
-        } catch (\Exception $e) {
-            // don't bother us... just give us the $e
-        }
-        $this->assertInstanceOf('triagens\ArangoDb\ServerException', $e);
-        $this->assertTrue($e->getCode() == 404, 'Should be 404, instead got: ' . $e->getCode());
-
-
-        // Try to remove a non-existent document
-        // This should cause an exception with a code of 404
-        try {
-            $e = null;
-            $documentHandler->removeById($this->collection->getId(), 'nonexistentId');
-        } catch (\Exception $e) {
-            // don't bother us... just give us the $e
-        }
-        $this->assertInstanceOf('triagens\ArangoDb\ServerException', $e);
-        $this->assertTrue($e->getCode() == 404, 'Should be 404, instead got: ' . $e->getCode());
-    }
-
-    /**
-     * Test for correct exception codes if nonexistent objects are tried to be gotten, replaced, updated or removed
-     */
-    public function testStoreNewDocumentThenReplace()
-    {
-        //Setup
-        $document = new Document();
-        $document->set('data', 'this is some test data');
-
-        //Check that the document is new
-        $this->assertTrue($document->getIsNew(), 'Document is not marked as new when it is a new document.');
-
-        $documentHandler = $this->documentHandler;
-
-        //Store the document
-        $id = $documentHandler->store($document, $this->collection->getId());
-
-        $rev = $document->getRevision();
-
-        $this->assertTrue($id == $document->getId(), 'Returned ID does not match the one in the document');
+        $this->assertArrayHasKey('id', $result, 'Id field should exist, empty or with an id');
         $this->assertTrue(
-             $document->get('data') == 'this is some test data',
-             'Data has been modified for some reason.'
+            ($result['name'] == 'ArangoDB_PHP_TestSuite_TestCollection_01'),
+            'name should return ArangoDB_PHP_TestSuite_TestCollection_01!'
         );
-
-        //Check that the document is not new
-        $this->assertTrue(!$document->getIsNew(), 'Document is marked as new when it is not.');
-
-        //Update the document and save again
-        $document->set('data', 'this is some different data');
-        $document->set('favorite_sport', 'hockey');
-        $documentHandler->store($document);
-
-        //Check that the id remains the same
-        $this->assertTrue($document->getId() == $id, 'ID of updated document does not match the initial ID.');
-
-        //Retrieve a copy of the document from the server
-        $document = $documentHandler->get($this->collection->getId(), $id);
-
-        //Assert that it is not new
-        $this->assertTrue(!$document->getIsNew(), 'Document is marked as new when it is not.');
-
-        //Assert the id is the same
-        $this->assertTrue($document->getId() == $id, 'ID of retrieved document does not match expected ID');
-
-        //Assert new data has been saved
-        $this->assertTrue($document->get('favorite_sport') == 'hockey', 'Retrieved data does not match.');
-
-        $this->assertTrue($document->getRevision() != $rev, 'Revision matches when it is not suppose to.');
+        $this->assertTrue(($result['waitForSync']), 'waitForSync should return true!');
     }
 
+
+    /**
+     * test for creation of a skip-list indexed collection and querying by range (first level and nested), with closed, skip and limit options
+     */
+
+    public function testCreateSkipListIndexedCollectionAddDocumentsAndQueryRange()
+    {
+        // set up collections, indexes and test-documents
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01'));
+        $collectionHandler->add($collection);
+
+        $indexRes = $collectionHandler->index($collection->getId(), 'skiplist', array('index'));
+        $nestedIndexRes = $collectionHandler->index($collection->getId(), 'skiplist', array('nested.index'));
+        $this->assertArrayHasKey(
+            'isNewlyCreated',
+            $indexRes,
+            "index creation result should have the isNewlyCreated key !"
+        );
+        $this->assertArrayHasKey(
+            'isNewlyCreated',
+            $nestedIndexRes,
+            "index creation result should have the isNewlyCreated key !"
+        );
+
+
+        $documentHandler = $this->documentHandler;
+
+        $document1 = Document::createFromArray(
+            array(
+                'index' => 2,
+                'someOtherAttribute' => 'someValue2',
+                'nested' => array(
+                    'index' => 3,
+                    'someNestedAttribute3' => 'someNestedValue3'
+                )
+            )
+        );
+        $documentHandler->add($collection->getId(), $document1);
+        $document2 = Document::createFromArray(
+            array(
+                'index' => 1,
+                'someOtherAttribute' => 'someValue1',
+                'nested' => array(
+                    'index' => 2,
+                    'someNestedAttribute3' => 'someNestedValue2'
+                )
+            )
+        );
+        $documentHandler->add($collection->getId(), $document2);
+
+        $document3 = Document::createFromArray(
+            array(
+                'index' => 3,
+                'someOtherAttribute' => 'someValue3',
+                'nested' => array(
+                    'index' => 1,
+                    'someNestedAttribute3' => 'someNestedValue1'
+                )
+            )
+        );
+        $documentHandler->add($collection->getId(), $document3);
+
+
+        // first level attribute range test
+        $rangeResult = $collectionHandler->range($collection->getId(), 'index', 1, 2, array('closed' => false));
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue($resultArray[0]->index == 1, "This value should be 1 !");
+        $this->assertArrayNotHasKey(1, $resultArray, "Should not have a second key !");
+
+
+        $rangeResult = $collectionHandler->range($collection->getId(), 'index', 2, 3, array('closed' => true));
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue($resultArray[0]->index == 2, "This value should be 2 !");
+        $this->asserttrue($resultArray[1]->index == 3, "This value should be 3 !");
+
+
+        $rangeResult = $collectionHandler->range(
+            $collection->getId(),
+            'index',
+            2,
+            3,
+            array('closed' => true, 'limit' => 1)
+        );
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue($resultArray[0]->index == 2, "This value should be 2 !");
+        $this->assertArrayNotHasKey(1, $resultArray, "Should not have a second key !");
+
+
+        $rangeResult = $collectionHandler->range(
+            $collection->getId(),
+            'index',
+            2,
+            3,
+            array('closed' => true, 'skip' => 1)
+        );
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue($resultArray[0]->index == 3, "This value should be 3 !");
+        $this->assertArrayNotHasKey(1, $resultArray, "Should not have a second key !");
+
+
+        // nested attribute range test
+        $rangeResult = $collectionHandler->range($collection->getId(), 'nested.index', 1, 2, array('closed' => false));
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue($resultArray[0]->nested['index'] == 1, "This value should be 1 !");
+        $this->assertArrayNotHasKey(1, $resultArray, "Should not have a second key !");
+
+
+        $rangeResult = $collectionHandler->range($collection->getId(), 'nested.index', 2, 3, array('closed' => true));
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue($resultArray[0]->nested['index'] == 2, "This value should be 2 !");
+        $this->asserttrue($resultArray[1]->nested['index'] == 3, "This value should be 3 !");
+
+
+        $rangeResult = $collectionHandler->range(
+            $collection->getId(),
+            'nested.index',
+            2,
+            3,
+            array('closed' => true, 'limit' => 1)
+        );
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue($resultArray[0]->nested['index'] == 2, "This value should be 2 !");
+        $this->assertArrayNotHasKey(1, $resultArray, "Should not have a second key !");
+
+
+        $rangeResult = $collectionHandler->range(
+            $collection->getId(),
+            'nested.index',
+            2,
+            3,
+            array('closed' => true, 'skip' => 1)
+        );
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue($resultArray[0]->nested['index'] == 3, "This value should be 3 !");
+        $this->assertArrayNotHasKey(1, $resultArray, "Should not have a second key !");
+
+
+        // Clean up...
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * test for creation of a geo indexed collection and querying by near, with distance, skip and limit options
+     */
+    public function testCreateGeoIndexedCollectionAddDocumentsAndQueryNear()
+    {
+        // set up collections, indexes and test-documents
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01'));
+        $collectionHandler->add($collection);
+
+        $indexRes = $collectionHandler->index($collection->getId(), 'geo', array('loc'));
+        $this->assertArrayHasKey(
+            'isNewlyCreated',
+            $indexRes,
+            "index creation result should have the isNewlyCreated key !"
+        );
+
+
+        $documentHandler = $this->documentHandler;
+
+        $document1 = Document::createFromArray(array('loc' => array(0, 0), 'someOtherAttribute' => '0 0'));
+        $documentHandler->add($collection->getId(), $document1);
+        $document2 = Document::createFromArray(array('loc' => array(1, 1), 'someOtherAttribute' => '1 1'));
+        $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(array('loc' => array(+30, -30), 'someOtherAttribute' => '30 -30'));
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+        $documentHandler->getById($collection->getId(), $documentId3);
+
+
+        $rangeResult = $collectionHandler->near($collection->getId(), 0, 0);
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue(
+            ($resultArray[0]->loc[0] == 0 && $resultArray[0]->loc[1] == 0),
+            "This value should be 0 0!, is :" . $resultArray[0]->loc[0] . ' ' . $resultArray[0]->loc[1]
+        );
+        $this->asserttrue(
+            ($resultArray[1]->loc[0] == 1 && $resultArray[1]->loc[1] == 1),
+            "This value should be 1 1!, is :" . $resultArray[1]->loc[0] . ' ' . $resultArray[1]->loc[1]
+        );
+
+
+        $rangeResult = $collectionHandler->near($collection->getId(), 0, 0, array('distance' => 'distance'));
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue(
+            ($resultArray[0]->loc[0] == 0 && $resultArray[0]->loc[1] == 0),
+            "This value should be 0 0 !, is :" . $resultArray[0]->loc[0] . ' ' . $resultArray[0]->loc[1]
+        );
+        $this->asserttrue(
+            ($resultArray[1]->loc[0] == 1 && $resultArray[1]->loc[1] == 1),
+            "This value should be 1 1!, is :" . $resultArray[1]->loc[0] . ' ' . $resultArray[1]->loc[1]
+        );
+        $this->asserttrue(
+            ($resultArray[2]->loc[0] == 30 && $resultArray[2]->loc[1] == -30),
+            "This value should be 30 30!, is :" . $resultArray[0]->loc[0] . ' ' . $resultArray[0]->loc[1]
+        );
+        $this->asserttrue(
+            $resultArray[0]->distance == 0,
+            "This value should be 0 ! It is :" . $resultArray[0]->distance
+        );
+
+
+        $rangeResult = $collectionHandler->near($collection->getId(), 0, 0, array('limit' => 1));
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue(
+            ($resultArray[0]->loc[0] == 0 && $resultArray[0]->loc[1] == 0),
+            "This value should be 0 0!, is :" . $resultArray[0]->loc[0] . ' ' . $resultArray[0]->loc[1]
+        );
+        $this->assertArrayNotHasKey(1, $resultArray, "Should not have a second key !");
+
+
+        $rangeResult = $collectionHandler->near($collection->getId(), 0, 0, array('skip' => 1));
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue(
+            ($resultArray[0]->loc[0] == 1 && $resultArray[0]->loc[1] == 1),
+            "This value should be 1 1!, is :" . $resultArray[0]->loc[0] . ' ' . $resultArray[0]->loc[1]
+        );
+        $this->asserttrue(
+            ($resultArray[1]->loc[0] == 30 && $resultArray[1]->loc[1] == -30),
+            "This value should be 30 30!, is :" . $resultArray[0]->loc[0] . ' ' . $resultArray[0]->loc[1]
+        );
+        $this->assertArrayNotHasKey(2, $resultArray, "Should not have a third key !");
+
+
+        $rangeResult = $collectionHandler->near($collection->getId(), +30, -30);
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue(
+            ($resultArray[0]->loc[0] == 30 && $resultArray[0]->loc[1] == -30),
+            "This value should be 30 30!, is :" . $resultArray[0]->loc[0] . ' ' . $resultArray[0]->loc[1]
+        );
+        $this->asserttrue(
+            ($resultArray[1]->loc[0] == 1 && $resultArray[1]->loc[1] == 1),
+            "This value should be 1 1!, is :" . $resultArray[1]->loc[0] . ' ' . $resultArray[1]->loc[1]
+        );
+        $this->asserttrue(
+            ($resultArray[2]->loc[0] == 0 && $resultArray[2]->loc[1] == 0),
+            "This value should be 0 0!, is :" . $resultArray[1]->loc[0] . ' ' . $resultArray[1]->loc[1]
+        );
+
+
+        // Clean up...
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * test for creation of a geo indexed collection and querying by within, with distance, skip and limit options
+     */
+    public function testCreateGeoIndexedCollectionAddDocumentsAndQueryWithin()
+    {
+        // set up collections, indexes and test-documents
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01'));
+        $collectionHandler->add($collection);
+
+        $indexRes = $collectionHandler->index($collection->getId(), 'geo', array('loc'));
+        $this->assertArrayHasKey(
+            'isNewlyCreated',
+            $indexRes,
+            "index creation result should have the isNewlyCreated key !"
+        );
+
+
+        $documentHandler = $this->documentHandler;
+
+        $document1 = Document::createFromArray(array('loc' => array(0, 0), 'someOtherAttribute' => '0 0'));
+        $documentHandler->add($collection->getId(), $document1);
+        $document2 = Document::createFromArray(array('loc' => array(1, 1), 'someOtherAttribute' => '1 1'));
+        $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(array('loc' => array(+30, -30), 'someOtherAttribute' => '30 -30'));
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+        $documentHandler->getById($collection->getId(), $documentId3);
+
+
+        $rangeResult = $collectionHandler->within($collection->getId(), 0, 0, 0);
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue(
+            ($resultArray[0]->loc[0] == 0 && $resultArray[0]->loc[1] == 0),
+            "This value should be 0 0!, is :" . $resultArray[0]->loc[0] . ' ' . $resultArray[0]->loc[1]
+        );
+
+
+        $rangeResult = $collectionHandler->within(
+            $collection->getId(),
+            0,
+            0,
+            200 * 1000,
+            array('distance' => 'distance')
+        );
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue(
+            ($resultArray[0]->loc[0] == 0 && $resultArray[0]->loc[1] == 0),
+            "This value should be 0 0 !, is :" . $resultArray[0]->loc[0] . ' ' . $resultArray[0]->loc[1]
+        );
+        $this->asserttrue(
+            ($resultArray[1]->loc[0] == 1 && $resultArray[1]->loc[1] == 1),
+            "This value should be 1 1!, is :" . $resultArray[1]->loc[0] . ' ' . $resultArray[1]->loc[1]
+        );
+        $this->assertArrayNotHasKey(2, $resultArray, "Should not have a third key !");
+        $this->asserttrue(
+            $resultArray[0]->distance == 0,
+            "This value should be 0 ! It is :" . $resultArray[0]->distance
+        );
+
+
+        $rangeResult = $collectionHandler->within($collection->getId(), 0, 0, 200 * 1000, array('limit' => 1));
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue(
+            ($resultArray[0]->loc[0] == 0 && $resultArray[0]->loc[1] == 0),
+            "This value should be 0 0!, is :" . $resultArray[0]->loc[0] . ' ' . $resultArray[0]->loc[1]
+        );
+        $this->assertArrayNotHasKey(1, $resultArray, "Should not have a second key !");
+
+
+        $rangeResult = $collectionHandler->within($collection->getId(), 0, 0, 20000 * 1000, array('skip' => 1));
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue(
+            ($resultArray[0]->loc[0] == 1 && $resultArray[0]->loc[1] == 1),
+            "This value should be 1 1!, is :" . $resultArray[0]->loc[0] . ' ' . $resultArray[0]->loc[1]
+        );
+        $this->asserttrue(
+            ($resultArray[1]->loc[0] == 30 && $resultArray[1]->loc[1] == -30),
+            "This value should be 30 30!, is :" . $resultArray[0]->loc[0] . ' ' . $resultArray[0]->loc[1]
+        );
+        $this->assertArrayNotHasKey(2, $resultArray, "Should not have a third key !");
+
+
+        $rangeResult = $collectionHandler->within($collection->getId(), +30, -30, 20000 * 1000);
+        $resultArray = $rangeResult->getAll();
+        $this->asserttrue(
+            ($resultArray[0]->loc[0] == 30 && $resultArray[0]->loc[1] == -30),
+            "This value should be 30 30!, is :" . $resultArray[0]->loc[0] . ' ' . $resultArray[0]->loc[1]
+        );
+        $this->asserttrue(
+            ($resultArray[1]->loc[0] == 1 && $resultArray[1]->loc[1] == 1),
+            "This value should be 1 1!, is :" . $resultArray[1]->loc[0] . ' ' . $resultArray[1]->loc[1]
+        );
+        $this->asserttrue(
+            ($resultArray[2]->loc[0] == 0 && $resultArray[2]->loc[1] == 0),
+            "This value should be 0 0!, is :" . $resultArray[1]->loc[0] . ' ' . $resultArray[1]->loc[1]
+        );
+
+
+        // Clean up...
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * test for creation of a fulltext indexed collection and querying by within, with distance, skip and limit options
+     */
+    public function testCreateFulltextIndexedCollectionAddDocumentsAndQuery()
+    {
+        // set up collections and index
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01'));
+        $collectionHandler->add($collection);
+
+        $indexRes = $collectionHandler->index($collection->getName(), 'fulltext', array('name'));
+        $this->assertArrayHasKey(
+            'isNewlyCreated',
+            $indexRes,
+            "index creation result should have the isNewlyCreated key !"
+        );
+
+        // Check if the index is returned in the indexes of the collection
+        $indexes = $collectionHandler->getIndexes($collection->getName());
+        $this->assertTrue($indexes['indexes'][1]['fields'][0] === 'name', 'The index should be on field "name"!');
+
+        // Drop the index
+        $collectionHandler->dropIndex($indexes['indexes'][1]['id']);
+        $indexes = $collectionHandler->getIndexes($collection->getName());
+
+        // Check if the index is not in the indexes of the collection anymore
+        $this->assertArrayNotHasKey(1, $indexes['indexes'], 'There should not be an index on field "name"!');
+
+        // Clean up...
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * Test if we can create a full text index with options, on a collection
+     */
+    public function testCreateFulltextIndexedCollectionWithOptions()
+    {
+        // set up collections and index
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01'));
+        $collectionHandler->add($collection);
+
+        $indexRes = $collectionHandler->index(
+            $collection->getName(),
+            'fulltext',
+            array('name'),
+            false,
+            array('minLength' => 10)
+        );
+
+        $this->assertArrayHasKey(
+            'isNewlyCreated',
+            $indexRes,
+            "index creation result should have the isNewlyCreated key !"
+        );
+
+        $this->assertArrayHasKey('minLength', $indexRes, 'index creation result should have a minLength key!');
+
+        $this->assertEquals(
+            10,
+            $indexRes['minLength'],
+            'index created does not have the same minLength as the one sent!'
+        );
+
+        // Check if the index is returned in the indexes of the collection
+        $indexes = $collectionHandler->getIndexes($collection->getName());
+        $this->assertTrue($indexes['indexes'][1]['fields'][0] === 'name', 'The index should be on field "name"!');
+
+        // Drop the index
+        $collectionHandler->dropIndex($indexes['indexes'][1]['id']);
+        $indexes = $collectionHandler->getIndexes($collection->getName());
+
+        // Check if the index is not in the indexes of the collection anymore
+        $this->assertArrayNotHasKey(1, $indexes['indexes'], 'There should not be an index on field "name"!');
+
+        // Clean up...
+        $response = $collectionHandler->delete($collection);
+        $this->assertTrue($response, 'Delete should return true!');
+    }
+
+
+    /**
+     * Test getting a random document from the collection
+     */
+    public function testAnyDocumentInCollection()
+    {
+        // set up collections and documents
+        $collectionHandler = $this->collectionHandler;
+        $documentHandler = $this->documentHandler;
+
+        $collection = Collection::createFromArray(array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_Any'));
+        $collectionHandler->add($collection);
+
+        $document1 = new Document();
+        $document1->set('message', 'message1');
+
+        $documentHandler->save($collection->getId(), $document1);
+
+        $document2 = new Document();
+        $document2->set('message', 'message2');
+
+        $documentHandler->save($collection->getId(), $document2);
+
+        $document3 = new Document();
+        $document3->set('message', 'message3');
+
+        $documentHandler->save($collection->getId(), $document3);
+
+        //Now, let's try to query any document
+        $document = $collectionHandler->any($collection->getName());
+        $this->assertContains(
+            $document->get('message'),
+            array('message1', 'message2', 'message3'),
+            'A document that was not part of the collection was retrieved!'
+        );
+
+        //Let's try another random document
+        $document = $collectionHandler->any($collection->getName());
+        $this->assertContains(
+            $document->get('message'),
+            array('message1', 'message2', 'message3'),
+            'A document that was not part of the collection was retrieved!'
+        );
+
+        $collectionHandler->delete($collection->getName());
+    }
+
+
+    /**
+     * Test getting a random document from a collection that does not exist
+     */
+    public function testAnyDocumentInNonExistentCollection()
+    {
+        $collectionHandler = $this->collectionHandler;
+
+        //To be safe, we need to make sure the collection definitely doesn't exist,
+        //so, if it exists, delete it.
+        try {
+            $collectionHandler->drop('collection_that_does-not_exist');
+        } catch (Exception $e) {
+            //Ignore the exception.
+        }
+
+        try {
+            //Let's try to get a random document
+            $collectionHandler->any('collection_that_does_not_exist');
+        } catch (ServerException $e) {
+            $this->assertInstanceOf(
+                '\triagens\ArangoDb\ServerException',
+                $e,
+                "Exception thrown was not a ServerException!"
+            );
+            $this->assertEquals(404, $e->getCode(), "Error code was not a 404!");
+        }
+    }
+
+
+    /**
+     * Test getting a random document from an empty collection
+     */
+    public function testAnyDocumentInAnEmptyCollection()
+    {
+
+        $collectionHandler = $this->collectionHandler;
+
+        try {
+            $collectionHandler->delete('ArangoDB_PHP_TestSuite_TestCollection_Any_Empty');
+        } catch (Exception $e) {
+            //Ignore
+        }
+
+        $collectionHandler->create('ArangoDB_PHP_TestSuite_TestCollection_Any_Empty');
+
+        $any = $collectionHandler->any('ArangoDB_PHP_TestSuite_TestCollection_Any_Empty');
+
+        $this->assertNull($any, "any() on an empty collection should return null.");
+
+        $collectionHandler->delete('ArangoDB_PHP_TestSuite_TestCollection_Any_Empty');
+    }
+
+
+    /**
+     * test for fulltext queries
+     */
+    public function testFulltextQuery()
+    {
+        $this->collectionHandler = new CollectionHandler($this->connection);
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01', 'waitForSync' => true)
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+        // First we test without a fulltext index and expect a 400
+        try {
+            $result = $collectionHandler->fulltext(
+                $collection->getName(),
+                "someOtherAttribute",
+                "someOtherValue"
+            );
+        } catch (Exception $e) {
+
+        }
+        $this->assertTrue($e->getCode() === 400);
+
+        // Now we create an index
+        $fulltextIndexId = $collectionHandler->createFulltextIndex($collection->getId(), array("someOtherAttribute"));
+        $fulltextIndexId = $fulltextIndexId["id"];
+        $cursor = $collectionHandler->fulltext(
+            $collection->getName(),
+            "someOtherAttribute",
+            "someOtherValue",
+            array("index" => $fulltextIndexId)
+        );
+
+        $m = $cursor->getMetadata();
+        $this->assertTrue($m["count"] == 2);
+        $this->assertTrue($m["hasMore"] == false);
+
+        // Now we pass some options
+        $cursor = $collectionHandler->fulltext(
+            $collection->getName(),
+            "someOtherAttribute",
+            "someOtherValue",
+            array("index" => $fulltextIndexId, "skip" => 1,)
+        );
+
+        $m = $cursor->getMetadata();
+        $this->assertTrue($m["count"] == 1);
+        $this->assertTrue($m["hasMore"] == false);
+
+        $cursor = $collectionHandler->fulltext(
+            $collection->getName(),
+            "someOtherAttribute",
+            "someOtherValue",
+            array("batchSize" => 1)
+        );
+
+        $m = $cursor->getMetadata();
+        $this->assertTrue($m["count"] == 2);
+        $this->assertTrue(count($m["result"]) == 1);
+        $this->assertTrue($m["hasMore"] == true);
+
+    }
+
+
+    /**
+     * test bulk document lookups
+     */
+    public function testLookupByKeys()
+    {
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $collection = Collection::createFromArray(
+            array('name' => 'ArangoDB_PHP_TestSuite_TestCollection_01', 'waitForSync' => false)
+        );
+        $collectionHandler->add($collection);
+        $document = Document::createFromArray(
+            array('someAttribute' => 'someValue1', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId = $documentHandler->add($collection->getId(), $document);
+        $document2 = Document::createFromArray(
+            array('someAttribute' => 'someValue2', 'someOtherAttribute' => 'someOtherValue2')
+        );
+        $documentId2 = $documentHandler->add($collection->getId(), $document2);
+        $document3 = Document::createFromArray(
+            array('someAttribute' => 'someValue3', 'someOtherAttribute' => 'someOtherValue')
+        );
+        $documentId3 = $documentHandler->add($collection->getId(), $document3);
+
+        $this->assertTrue(is_numeric($documentId), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId2), 'Did not return an id!');
+        $this->assertTrue(is_numeric($documentId3), 'Did not return an id!');
+
+        $keys = array($documentId, $documentId2, $documentId3);
+        $result = $collectionHandler->lookupByKeys($collection->getId(), $keys);
+        $this->assertEquals(3, count($result));
+
+        $document = $result[0];
+        $this->assertInstanceOf(
+            '\triagens\ArangoDb\Document',
+            $document,
+            "Object was not a Document!"
+        );
+
+        $this->assertEquals($documentId, $document->getId());
+
+        $this->assertEquals("someValue1", $document->someAttribute);
+        $this->assertEquals("someOtherValue", $document->someOtherAttribute);
+
+        $document = $result[1];
+        $this->assertInstanceOf(
+            '\triagens\ArangoDb\Document',
+            $document,
+            "Object was not a Document!"
+        );
+
+        $this->assertEquals($documentId2, $document->getId());
+
+        $this->assertEquals("someValue2", $document->someAttribute);
+        $this->assertEquals("someOtherValue2", $document->someOtherAttribute);
+
+        $document = $result[2];
+        $this->assertInstanceOf(
+            '\triagens\ArangoDb\Document',
+            $document,
+            "Object was not a Document!"
+        );
+
+        $this->assertEquals($documentId3, $document->getId());
+
+        $this->assertEquals("someValue3", $document->someAttribute);
+        $this->assertEquals("someOtherValue", $document->someOtherAttribute);
+    }
+
+    /**
+     * test for lookup by keys with unknown collection
+     * @expectedException \triagens\ArangoDb\ServerException
+     */
+    public function testLookupByCollectionNotFound()
+    {
+        $documentHandler = $this->documentHandler;
+        $collectionHandler = $this->collectionHandler;
+
+        $keys = array("foo");
+        $result = $collectionHandler->lookupByKeys("ThisDoesNotExist", $keys);
+    }
+
+    /**
+     * Test tear-down
+     */
     public function tearDown()
     {
         try {
             $this->collectionHandler->delete('ArangoDB_PHP_TestSuite_TestCollection_01');
+        } catch (\Exception $e) {
+            // don't bother us, if it's already deleted.
+        }
+        try {
+            $this->collectionHandler->delete('ArangoDB_PHP_TestSuite_TestCollection_02');
+        } catch (\Exception $e) {
+            // don't bother us, if it's already deleted.
+        }
+        try {
+            $this->collectionHandler->drop('importCollection_01_arango_unittests');
+        } catch (\Exception $e) {
+            // don't bother us, if it's already deleted.
+        }
+        try {
+            $this->collectionHandler->drop('_ArangoDB_PHP_TestSuite_TestCollection_01');
+        } catch (\Exception $e) {
+            // don't bother us, if it's already deleted.
+        }
+
+        try {
+            $this->collectionHandler->drop('ArangoDB_PHP_TestSuite_TestCollection_Any');
         } catch (\Exception $e) {
             // don't bother us, if it's already deleted.
         }
